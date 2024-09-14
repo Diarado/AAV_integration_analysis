@@ -1,115 +1,90 @@
-# Required Libraries
+# Load required libraries
+print("Loading required libraries...")
 library(ShortRead)
-library(parallel)
-library(GenomicRanges)
+library(GenomicAlignments)
+library(Rsamtools)
 library(tidyverse)
 library(yaml)
-library(GenomicAlignments)
 
-options(stringsAsFactors = FALSE)
+# Set constants
+ALIGN_DIR <- "/mnt/d/jiahe/IU/AAV/HeLa_project/aligned_bams_test"
+AAV_REF_NAME <- "pssAAV-CB-EGFP"  
+OUTPUT_CSV <- "/mnt/d/jiahe/IU/AAV/HeLa_project/output/aav_reads_locations.csv"
 
-# Load the config file
-configFile <- "/mnt/d/Jiahe/IU/AAV/HeLa_project/config.yaml"
-config <- read_yaml(configFile)
+# Retrieve aligned BAM files
+print("Retrieving BAM files...")
+bam_files <- list.files(ALIGN_DIR, pattern = "_with_header\\.bam$", full.names = TRUE)
+print(paste("Total number of BAM files found:", length(bam_files)))
 
-# Debug: Print the config file path and its content
-print("Config file loaded successfully:")
-print(config)
-
-# Create Output Directory
-print("Creating output directory...")
-dir.create(config$outputDir, showWarnings = FALSE)
-
-# Start log file
-logFile <- file.path(config$outputDir, 'logs', 'log')
-dir.create(file.path(config$outputDir, 'logs'), showWarnings = FALSE)  # Ensure logs dir exists before writing log
-write(date(), file = logFile)
-
-# Read in the sample configuration (sampleConfigFile contains the input BAM files)
-print("Loading sample configuration from:")
-print(config$sampleConfigFile)
-samples <- read_delim(config$sampleConfigFile, delim = ',', col_names = TRUE, col_types = cols())
-
-# Debug: Show the structure of the loaded sample configuration
-print("Sample configuration loaded:")
-print(samples)
-
-# Load gRNA sequences (gRNAs.csv)
-print("Loading gRNA sequences from gRNAs.csv...")
-gRNAs <- read_delim("/mnt/d/Jiahe/IU/AAV/HeLa_project/gRNAs.csv", delim = ',', col_names = TRUE)
-print("gRNA sequences loaded:")
-print(gRNAs)
-
-# Load AAV reference sequence (pssAAV-CB-EGFP ARM.fa)
-print("Loading AAV reference sequence from pssAAV-CB-EGFP ARM.fa...")
-AAV_sequence <- readDNAStringSet("/mnt/d/Jiahe/IU/AAV/HeLa_project/pssAAV-CB-EGFP ARM.fa")
-print("AAV reference sequence loaded.")
-
-# Load barcode information (barcodes.csv)
-print("Loading barcode information from barcodes.csv...")
-barcodes <- read_delim("/mnt/d/Jiahe/IU/AAV/HeLa_project/barcodes.csv", delim = ',', col_names = TRUE)
-print("Barcode information loaded.")
-print(barcodes)
-
-# Set up parallel processing (DISABLED for debugging)
-#print("Setting up parallel processing...")
-#cluster <- makeCluster(config$alignment.CPUs)
-#clusterExport(cluster, c('config', 'samples', 'gRNAs', 'AAV_sequence', 'barcodes', 'logFile'))
-
-# Function to process aligned reads and identify integration sites
-identifyIntegrationSites <- function(sampleRow) {
-  print(paste("Processing sample row:", sampleRow$sample))  # Debug: Print sample details
+# Function to find reads aligned to AAV and save their locations
+findAAVReads <- function(aligned_bam) {
+  sample_name <- basename(aligned_bam)
+  sample_name <- sub("_with_header\\.bam$", "", sample_name)
+  print(paste("Processing sample:", sample_name))
   
-  bamFile <- file.path("barcode13", paste0("PAW40361_pass_barcode13_04266714_eb72dc1a_", sampleRow$sample, ".bam"))
-  print(paste("Processing BAM file:", bamFile))
-  
-  if (!file.exists(bamFile)) {
-    stop(paste("BAM file not found:", bamFile))
+  if (!file.exists(aligned_bam)) {
+    stop(paste("BAM file not found:", aligned_bam))
   }
   
-  print("Loading aligned reads from BAM file...")
-  tryCatch({
-    reads <- readGAlignments(bamFile)
-    
-    if (length(reads) == 0) {
-      stop("No alignments found in BAM file")
-    }
-    
-    print(paste("Number of reads loaded:", length(reads)))
-    
-    print("Identifying integration sites...")
-    integrationSites <- GenomicRanges::reduce(granges(reads))
-    
-    print(paste("Number of integration sites identified:", length(integrationSites)))
-    rDataFile <- file.path(config$outputDir, paste0(sampleRow$sample, "_integration_sites.RData"))
-    print(paste("Saving integration sites to:", rDataFile))
-    save(integrationSites, file = rDataFile)
-    
-    if (file.exists(rDataFile)) {
-      print(paste("RData file saved successfully:", rDataFile))
-    } else {
-      stop("Failed to save the RData file")
-    }
-    
-    write(paste("Completed integration site identification for sample:", sampleRow$sample), file = logFile, append = TRUE)
-    print(paste("Integration site identification completed for sample:", sampleRow$sample))
-    
-  }, error = function(e) {
-    print(paste("Error during integration site identification:", e$message))
-  })
+  # Load alignments
+  print("Loading alignments...")
+  param <- ScanBamParam(what = c("qname", "rname", "pos", "cigar"))
+  reads <- readGAlignments(aligned_bam, param = param)
+  
+  if (length(reads) == 0) {
+    print(paste("No alignments found in BAM file:", aligned_bam))
+    return(NULL)
+  }
+  
+  # Print all reference names to verify
+  ref_names <- unique(seqnames(reads))
+  print("Reference names found in BAM file:")
+  print(ref_names)
+  
+  # Find reads aligned to AAV (verify the correct reference name)
+  aav_reads <- reads[seqnames(reads) == AAV_REF_NAME]
+  
+  if (length(aav_reads) == 0) {
+    print(paste("No AAV reads found in sample:", sample_name))
+    return(NULL)
+  }
+  
+  # Create a data frame with relevant information
+  read_data <- data.frame(
+    Sample = sample_name,
+    Read_Name = mcols(aav_reads)$qname,
+    AAV_Start = start(aav_reads),
+    AAV_End = end(aav_reads)
+  )
+  
+  print(paste("Found", nrow(read_data), "AAV reads in sample:", sample_name))
+  return(read_data)
 }
 
-# Running in a loop (sequential for debugging)
-print("Starting integration site analysis for each sample...")
-for (i in 1:nrow(samples)) {
-  print(paste("Running integration for sample:", samples$sample[i]))  # Debug: Notify function execution
-  identifyIntegrationSites(samples[i, ])
+# Initialize a list to collect all AAV reads
+all_aav_reads <- list()
+
+# Loop over BAM files and collect AAV reads
+for (aligned_bam in bam_files) {
+  print("------------------------------------------------------------")
+  aav_reads <- findAAVReads(aligned_bam)
+  if (!is.null(aav_reads)) {
+    all_aav_reads[[length(all_aav_reads) + 1]] <- aav_reads
+  }
+  print("------------------------------------------------------------")
 }
 
-# Stop cluster (DISABLED for now)
-# print("Stopping the cluster...")
-# stopCluster(cluster)
+# Combine all results into a single data frame
+if (length(all_aav_reads) > 0) {
+  all_aav_reads_df <- bind_rows(all_aav_reads)
+  print(paste("Total AAV reads found across all samples:", nrow(all_aav_reads_df)))
+  
+  # Save to CSV
+  print(paste("Saving results to:", OUTPUT_CSV))
+  write_csv(all_aav_reads_df, OUTPUT_CSV)
+} else {
+  print("No AAV reads found in any sample.")
+}
 
-# Write final completion message to log file
-write("Integration site analysis completed.", file = logFile, append = TRUE)
-print("Integration site analysis completed.")
+print("AAV read analysis completed.")
+
