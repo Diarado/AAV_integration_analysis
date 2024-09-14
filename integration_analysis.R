@@ -1,15 +1,13 @@
 # Load required libraries
 print("Loading required libraries...")
-library(ShortRead)
 library(GenomicAlignments)
 library(Rsamtools)
 library(tidyverse)
-library(yaml)
 
 # Set constants
-ALIGN_DIR <- "/mnt/d/jiahe/IU/AAV/HeLa_project/aligned_bams_test"
+ALIGN_DIR <- "D:/jiahe/IU/AAV/HeLa_project/aligned_bams_test"
 AAV_REF_NAME <- "pssAAV-CB-EGFP"  
-OUTPUT_CSV <- "/mnt/d/jiahe/IU/AAV/HeLa_project/output/aav_reads_locations.csv"
+OUTPUT_CSV <- "D:/jiahe/IU/AAV/HeLa_project/output/aav_reads_locations.csv"
 
 # Retrieve aligned BAM files
 print("Retrieving BAM files...")
@@ -22,13 +20,9 @@ findAAVReads <- function(aligned_bam) {
   sample_name <- sub("_with_header\\.bam$", "", sample_name)
   print(paste("Processing sample:", sample_name))
   
-  if (!file.exists(aligned_bam)) {
-    stop(paste("BAM file not found:", aligned_bam))
-  }
-  
   # Load alignments
   print("Loading alignments...")
-  param <- ScanBamParam(what = c("qname", "rname", "pos", "cigar"))
+  param <- ScanBamParam(what = c("qname", "rname", "pos", "cigar"), tag = "SA")
   reads <- readGAlignments(aligned_bam, param = param)
   
   if (length(reads) == 0) {
@@ -36,12 +30,7 @@ findAAVReads <- function(aligned_bam) {
     return(NULL)
   }
   
-  # Print all reference names to verify
-  ref_names <- unique(seqnames(reads))
-  print("Reference names found in BAM file:")
-  print(ref_names)
-  
-  # Find reads aligned to AAV (verify the correct reference name)
+  # Find reads aligned to AAV
   aav_reads <- reads[seqnames(reads) == AAV_REF_NAME]
   
   if (length(aav_reads) == 0) {
@@ -50,38 +39,45 @@ findAAVReads <- function(aligned_bam) {
   }
   
   # Create a data frame with relevant information
-  read_data <- data.frame(
-    Sample = sample_name,
+  aav_data <- data.frame(
+    Sample = rep(sample_name, length(aav_reads)),
     Read_Name = mcols(aav_reads)$qname,
     AAV_Start = start(aav_reads),
-    AAV_End = end(aav_reads)
+    AAV_End = end(aav_reads),
+    Host_Chromosome = rep(NA, length(aav_reads)),  # Initialize with NA
+    Host_Start = rep(NA, length(aav_reads)),       # Initialize with NA
+    stringsAsFactors = FALSE
   )
   
-  print(paste("Found", nrow(read_data), "AAV reads in sample:", sample_name))
-  return(read_data)
-}
-
-# Initialize a list to collect all AAV reads
-all_aav_reads <- list()
-
-# Loop over BAM files and collect AAV reads
-for (aligned_bam in bam_files) {
-  print("------------------------------------------------------------")
-  aav_reads <- findAAVReads(aligned_bam)
-  if (!is.null(aav_reads)) {
-    all_aav_reads[[length(all_aav_reads) + 1]] <- aav_reads
-  }
-  print("------------------------------------------------------------")
-}
-
-# Combine all results into a single data frame
-if (length(all_aav_reads) > 0) {
-  all_aav_reads_df <- bind_rows(all_aav_reads)
-  print(paste("Total AAV reads found across all samples:", nrow(all_aav_reads_df)))
+  # Extract SA tag details (supplementary alignments) and filter out AAV vector matches
+  sa_tags <- mcols(aav_reads)$SA
   
-  # Save to CSV
-  print(paste("Saving results to:", OUTPUT_CSV))
-  write_csv(all_aav_reads_df, OUTPUT_CSV)
+  if (!is.null(sa_tags)) {
+    sa_list <- strsplit(sa_tags, ";")
+    
+    for (i in seq_along(sa_list)) {
+      # Check if SA tag is valid and not referring to the AAV vector
+      if (!is.na(sa_list[[i]][1]) && length(sa_list[[i]]) > 0 && sa_list[[i]][1] != "" && !grepl(AAV_REF_NAME, sa_list[[i]][1])) {
+        sa_fields <- strsplit(sa_list[[i]][1], ",")[[1]]
+        host_start <- as.numeric(sa_fields[2])
+        aav_data$Host_Chromosome[i] <- sa_fields[1]
+        aav_data$Host_Start[i] <- host_start
+      }
+    }
+  }
+  
+  
+  return(aav_data)
+}
+
+# Process each BAM file and collect results
+all_aav_data <- lapply(bam_files, findAAVReads)
+all_aav_data_df <- bind_rows(all_aav_data)
+
+# Write results to CSV
+if (nrow(all_aav_data_df) > 0) {
+  write_csv(all_aav_data_df, OUTPUT_CSV)
+  print(paste("Results saved to:", OUTPUT_CSV))
 } else {
   print("No AAV reads found in any sample.")
 }
