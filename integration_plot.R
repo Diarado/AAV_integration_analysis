@@ -1,61 +1,52 @@
-intSiteDistributionPlot <- function (d, chromosomeLengths, alpha = 1) 
-{
-  library(GenomicRanges)
-  library(ggplot2)
-  library(gtools)
-  library(dplyr)
-  d <- d[, c("start", "seqnames", "subject")]
-  d <- suppressWarnings(bind_rows(d, bind_rows(lapply(names(chromosomeLengths)[!names(chromosomeLengths) %in% 
-                                                                                 unique(as.character(d$seqnames))], function(x) {
-                                                                                   data.frame(start = 1, seqnames = x)
-                                                                                 }))))
-  d$seqnames <- factor(d$seqnames, levels = mixedsort(names(chromosomeLengths)))
-  
-  d <- lapply(split(d, d$seqnames), function(x) {
-    lines <- data.frame(x = rep(x$start, each = 2), 
-                        y = rep(c(0, 1), nrow(x)), 
-                        g = rep(1:nrow(x), each = 2), 
-                        s = x$subject,
-                        seqnames = x$seqnames[1])
-    box <- data.frame(boxYmin = 0, boxYmax = 1, boxXmin = 1, 
-                      boxXmax = chromosomeLengths[[as.character(x$seqnames[1])]], 
-                      seqnames = x$seqnames[1])
-    list(lines = lines, box = box)
-  })
-  sites <- do.call(rbind, lapply(d, "[[", 1))
-  boxes <- do.call(rbind, lapply(d, "[[", 2))
-  
-  
-  ggplot() + 
-    theme_bw() + 
-    scale_color_manual(name = 'Dog', values = colorRampPalette(brewer.pal(12, "Paired"))(6)) +
-    geom_line(data = sites, 
-              alpha = alpha, 
-              size = 0.25,
-              aes(x, y, group = g, color = s)) +
-    geom_rect(data = boxes, 
-              color = "black", 
-              size = 0.25,
-              alpha = 0,
-              mapping = aes(xmin = boxXmin, 
-                            xmax = boxXmax, 
-                            ymin = boxYmin, 
-                            ymax = boxYmax)) + 
-    facet_grid(seqnames ~ ., switch = "y") + 
-    #scale_x_continuous(expand = c(0, 0)) + 
-    labs(x = "Genomic position", y = "") + 
-    theme(axis.text.y = element_blank(), 
-          axis.ticks.y = element_blank(), 
-          panel.grid.major = element_blank(), 
-          panel.grid.minor = element_blank(), panel.background = element_blank(),
-          panel.border = element_blank(), 
-          strip.text.y = element_text(size = 12, angle = 180), 
-          strip.background = element_blank(),
-          axis.title.x=element_blank(),
-          axis.text.x=element_blank(),
-          axis.ticks.x=element_blank())
-}
+# Load necessary libraries
+library(ggplot2)
+library(scales)
 
-report$genomeMap <- intSiteDistributionPlot(filter(intSites, ! subject %in% c('HO2', 'M12')), chromosomeLengths, alpha = 1)
-ggsave(report$genomeMap, file = 'tables_and_figures/chromosome_map.pdf', height = 10, width = 8, units = 'in')
+# Read chromosome information
+chromosome_info <- read.table("D:/Jiahe/IU/AAV/HeLa_project/hg38.fa.fai", header = FALSE, stringsAsFactors = FALSE)
+colnames(chromosome_info) <- c("chrom", "length", "offset", "line_bases", "line_bytes")
 
+# Read integration data
+data <- read.csv("D:/Jiahe/IU/AAV/HeLa_project/output/aav_reads_locations_test.csv", stringsAsFactors = FALSE)
+
+# Filter out entries with NA in Host_Chromosome or Host_Start
+integration_data <- subset(data, !is.na(Host_Chromosome) & !is.na(Host_Start))
+
+# Keep only standard chromosomes (chr1 to chr22, chrX, chrY)
+standard_chromosomes <- paste0("chr", c(1:22, "X", "Y"))
+chromosome_info <- subset(chromosome_info, chrom %in% standard_chromosomes)
+integration_data <- subset(integration_data, Host_Chromosome %in% standard_chromosomes)
+
+# Order chromosomes
+chromosome_info$chrom <- factor(chromosome_info$chrom, levels = standard_chromosomes)
+integration_data$Host_Chromosome <- factor(integration_data$Host_Chromosome, levels = standard_chromosomes)
+
+# Assign numeric y positions to chromosomes
+chromosome_info$y_pos <- as.numeric(chromosome_info$chrom)
+integration_data$y_pos <- as.numeric(integration_data$Host_Chromosome)
+
+# Prepare data for plotting
+chromosomes_df <- data.frame(
+  chrom = chromosome_info$chrom,
+  start = 0,
+  end = chromosome_info$length,
+  y_pos = chromosome_info$y_pos
+)
+
+# Create the plot
+ggplot() +
+  # Plot chromosomes as horizontal bars
+  geom_segment(data = chromosomes_df,
+               aes(x = start, xend = end, y = y_pos, yend = y_pos),
+               size = 5, color = "grey") +
+  # Plot integration sites as vertical lines
+  geom_segment(data = integration_data,
+               aes(x = Host_Start, xend = Host_Start, y = y_pos - 0.2, yend = y_pos + 0.2),
+               color = "red", size = 0.5) +
+  # Adjust scales and labels
+  scale_x_continuous(labels = comma) +
+  scale_y_continuous(breaks = chromosomes_df$y_pos, labels = chromosomes_df$chrom) +
+  theme_minimal() +
+  xlab("Position (bp)") +
+  ylab("Chromosome") +
+  ggtitle("AAV Integration Sites on Human Chromosomes")
