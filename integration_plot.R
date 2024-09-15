@@ -44,9 +44,18 @@ ggplot() +
                aes(x = Host_Start, xend = Host_Start, y = y_pos - 0.2, yend = y_pos + 0.2),
                color = "red", size = 0.5) +
   # Adjust scales and labels
-  scale_x_continuous(labels = comma) +
+  scale_x_continuous(
+    labels = scales::comma_format(scale = 1/1000), 
+    name = "Position (kbp)"                          
+  ) +
   scale_y_continuous(breaks = chromosomes_df$y_pos, labels = chromosomes_df$chrom) +
   theme_minimal() +
+  theme(
+    panel.grid = element_blank(),           
+    panel.background = element_blank(),     
+    axis.ticks.y = element_blank(),         
+    axis.text.y = element_text(size = 10)   
+  ) +
   xlab("Position (bp)") +
   ylab("Chromosome") +
   ggtitle("AAV Integration Sites on Human Chromosomes")
