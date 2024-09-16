@@ -1,4 +1,3 @@
-# Load necessary libraries
 library(ggplot2)
 library(scales)
 
@@ -12,26 +11,40 @@ data <- read.csv("D:/Jiahe/IU/AAV/HeLa_project/output/aav_reads_locations_test.c
 # Filter out entries with NA in Host_Chromosome or Host_Start
 integration_data <- subset(data, !is.na(Host_Chromosome) & !is.na(Host_Start))
 
-# Keep only standard chromosomes (chr1 to chr22, chrX, chrY)
-standard_chromosomes <- paste0("chr", c(1:22, "X", "Y"))
-chromosome_info <- subset(chromosome_info, chrom %in% standard_chromosomes)
-integration_data <- subset(integration_data, Host_Chromosome %in% standard_chromosomes)
+# Define the main chromosomes
+standard_chromosomes <- paste0("chr", c(1:22, "X", "Y")) # Include all variations and alts
+
+# Function to extract the main chromosome name
+extract_main_chrom <- function(chrom_name) {
+  match <- regexpr("^chr[0-9XY]+", chrom_name)
+  if (match[1] != -1) {
+    substr(chrom_name, match[1], attr(match, "match.length"))
+  } else {
+    NA
+  }
+}
+
+# Add 'chrom_main' to chromosome_info and integration_data
+chromosome_info$chrom_main <- sapply(chromosome_info$chrom, extract_main_chrom)
+integration_data$chrom_main <- sapply(integration_data$Host_Chromosome, extract_main_chrom)
+
+# Filter chromosomes to include only those with chrom_main in standard chromosomes
+chromosome_info <- subset(chromosome_info, chrom_main %in% standard_chromosomes)
+integration_data <- subset(integration_data, chrom_main %in% standard_chromosomes)
 
 # Order chromosomes
-chromosome_info$chrom <- factor(chromosome_info$chrom, levels = standard_chromosomes)
-integration_data$Host_Chromosome <- factor(integration_data$Host_Chromosome, levels = standard_chromosomes)
+chromosome_info$chrom_main <- factor(chromosome_info$chrom_main, levels = standard_chromosomes)
+integration_data$chrom_main <- factor(integration_data$chrom_main, levels = standard_chromosomes)
 
 # Assign numeric y positions to chromosomes
-chromosome_info$y_pos <- as.numeric(chromosome_info$chrom)
-integration_data$y_pos <- as.numeric(integration_data$Host_Chromosome)
+chromosome_info$y_pos <- as.numeric(chromosome_info$chrom_main)
+integration_data$y_pos <- as.numeric(integration_data$chrom_main)
 
 # Prepare data for plotting
-chromosomes_df <- data.frame(
-  chrom = chromosome_info$chrom,
-  start = 0,
-  end = chromosome_info$length,
-  y_pos = chromosome_info$y_pos
-)
+# Aggregate lengths by chrom_main (take maximum length)
+chromosomes_df <- aggregate(length ~ chrom_main + y_pos, data = chromosome_info, max)
+chromosomes_df$start <- 0
+chromosomes_df$end <- chromosomes_df$length
 
 # Create the plot
 ggplot() +
@@ -48,7 +61,7 @@ ggplot() +
     labels = scales::comma_format(scale = 1/1000), 
     name = "Position (kbp)"                          
   ) +
-  scale_y_continuous(breaks = chromosomes_df$y_pos, labels = chromosomes_df$chrom) +
+  scale_y_continuous(breaks = chromosomes_df$y_pos, labels = chromosomes_df$chrom_main) +
   theme_minimal() +
   theme(
     panel.grid = element_blank(),           
@@ -56,6 +69,5 @@ ggplot() +
     axis.ticks.y = element_blank(),         
     axis.text.y = element_text(size = 10)   
   ) +
-  xlab("Position (bp)") +
   ylab("Chromosome") +
   ggtitle("AAV Integration Sites on Human Chromosomes")
