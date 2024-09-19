@@ -6,7 +6,7 @@ chromosome_info <- read.table("D:/Jiahe/IU/AAV/HeLa_project/hg38.fa.fai", header
 colnames(chromosome_info) <- c("chrom", "length", "offset", "line_bases", "line_bytes")
 
 # Read integration data
-data <- read.csv("D:/Jiahe/IU/AAV/HeLa_project/output/aav_reads_locations_test.csv", stringsAsFactors = FALSE)
+data <- read.csv("D:/Jiahe/IU/AAV/HeLa_project/output/aav_reads_locations.csv", stringsAsFactors = FALSE)
 
 # Filter out entries with NA in Host_Chromosome or Host_Start
 integration_data <- subset(data, !is.na(Host_Chromosome) & !is.na(Host_Start))

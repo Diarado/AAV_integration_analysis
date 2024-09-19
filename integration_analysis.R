@@ -5,7 +5,7 @@ library(Rsamtools)
 library(tidyverse)
 
 # Set constants
-ALIGN_DIR <- "D:/jiahe/IU/AAV/HeLa_project/aligned_bams_test"
+ALIGN_DIR <- "D:/jiahe/IU/AAV/HeLa_project/aligned_bams"
 AAV_REF_NAME <- "pssAAV-CB-EGFP"  
 OUTPUT_CSV <- "D:/jiahe/IU/AAV/HeLa_project/output/aav_reads_locations.csv"
 
@@ -23,10 +23,16 @@ findAAVReads <- function(aligned_bam) {
   # Load alignments
   print("Loading alignments...")
   param <- ScanBamParam(what = c("qname", "rname", "pos", "cigar"), tag = "SA")
-  reads <- readGAlignments(aligned_bam, param = param)
+  reads <- tryCatch({
+    readGAlignments(aligned_bam, param = param)
+  }, error = function(e) {
+    print(paste(sample_name, "is null, skipping"))
+    return(NULL)
+  })
   
-  if (length(reads) == 0) {
-    print(paste("No alignments found in BAM file:", aligned_bam))
+  # Check if reads are NULL or empty
+  if (is.null(reads) || length(reads) == 0) {
+    print(paste("No alignments found in BAM file:", aligned_bam, "Skipping sample..."))
     return(NULL)
   }
   
@@ -53,19 +59,32 @@ findAAVReads <- function(aligned_bam) {
   sa_tags <- mcols(aav_reads)$SA
   
   if (!is.null(sa_tags)) {
-    sa_list <- strsplit(sa_tags, ";")
+    sa_list <- lapply(sa_tags, function(tag) {
+      if (!is.null(tag) && is.character(tag)) {
+        return(strsplit(tag, ";"))
+      } else {
+        return(NULL)
+      }
+    })
     
     for (i in seq_along(sa_list)) {
-      # Check if SA tag is valid and not referring to the AAV vector
-      if (!is.na(sa_list[[i]][1]) && length(sa_list[[i]]) > 0 && sa_list[[i]][1] != "" && !grepl(AAV_REF_NAME, sa_list[[i]][1])) {
-        sa_fields <- strsplit(sa_list[[i]][1], ",")[[1]]
-        host_start <- as.numeric(sa_fields[2])
-        aav_data$Host_Chromosome[i] <- sa_fields[1]
-        aav_data$Host_Start[i] <- host_start
+      current_sa <- sa_list[[i]]
+      
+      # Ensure the list is not NULL and the first element is valid
+      if (!is.null(current_sa) && length(current_sa) > 0) {
+        first_entry <- current_sa[[1]]
+        if (length(first_entry) > 0 && !is.na(first_entry[1]) && first_entry[1] != "" && !grepl(AAV_REF_NAME, first_entry[1])) {
+          sa_fields <- strsplit(first_entry[1], ",")[[1]]
+          
+          if (length(sa_fields) >= 2) {  # Ensure we have enough fields to extract
+            host_start <- as.numeric(sa_fields[2])
+            aav_data$Host_Chromosome[i] <- sa_fields[1]
+            aav_data$Host_Start[i] <- host_start
+          }
+        }
       }
     }
   }
-  
   
   return(aav_data)
 }
@@ -83,4 +102,3 @@ if (nrow(all_aav_data_df) > 0) {
 }
 
 print("AAV read analysis completed.")
-
