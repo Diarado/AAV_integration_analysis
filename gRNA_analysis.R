@@ -11,5 +11,6 @@ barcode14_cnt <- data |>
   filter(!is.na(Host_Chromosome) & substr(Sample, 22, 23) == "14")
 
 
-
+write_csv(barcode13_cnt, "D:/Jiahe/IU/AAV/HeLa_project/output/aav_13_integrations.csv")
+write_csv(barcode14_cnt, "D:/Jiahe/IU/AAV/HeLa_project/output/aav_14_integrations.csv")
 # find gRNA seq
