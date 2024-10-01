@@ -9,7 +9,14 @@ colnames(chromosome_info) <- c("chrom", "length", "offset", "line_bases", "line_
 data <- read.csv("D:/Jiahe/IU/AAV/HeLa_project/output/aav_reads_locations.csv", stringsAsFactors = FALSE)
 
 # Filter out entries with NA in Host_Chromosome or Host_Start
-integration_data <- subset(data, !is.na(Host_Chromosome) & !is.na(Host_Start))
+integration_data <- integration_data <- data |>
+  filter(
+    !is.na(Host_Chromosome),
+    !is.na(Host_Start),
+    (AAV_Start <= 2000 & 1269 <= AAV_End) &
+    (AAV_Start < 1413 & 1413 < AAV_End)
+      
+  )
 
 # Define the main chromosomes
 standard_chromosomes <- paste0("chr", c(1:22, "X", "Y")) # Include all variations and alts
@@ -70,4 +77,4 @@ ggplot() +
     axis.text.y = element_text(size = 10)   
   ) +
   ylab("Chromosome") +
-  ggtitle("AAV Integration Sites on Human Chromosomes")
+  ggtitle("AAV Integration Sites in Human Chromosomes (Those Includes Both ITR and CB)")
