@@ -3,23 +3,36 @@ library(Rsamtools)
 library(Biostrings)
 library(dplyr)
 library(stringr)
+library(readxl)
+library(tidyr)
 
-# Set working directory if needed
+# Set working directory
 setwd("D:/Jiahe/IU/AAV/HeLa_project")
 
-# Read the gRNAs.csv file
-gRNAs <- read.csv("gRNAs.csv", sep="\t", stringsAsFactors = FALSE)
+# Read the updated gRNAs.xlsx file with 'id' column
+gRNAs <- read_excel("gRNAs.xlsx")
 
 # Generate sequences to search for
-gRNAs$first17 <- substr(gRNAs$sequence, 1, 17)
-gRNAs$last3 <- substr(gRNAs$sequence, nchar(gRNAs$sequence) - 2, nchar(gRNAs$sequence))
-gRNAs$last3_PAM <- paste0(gRNAs$last3, gRNAs$PAM)
+gRNAs <- gRNAs %>%
+  mutate(
+    first17 = substr(sequence, 1, 17),
+    last3 = substr(sequence, nchar(sequence) - 2, nchar(sequence)),
+    last3_PAM = paste0(last3, PAM)
+  )
 
-# Create a vector of sequences to search for
-search_sequences <- unique(c(gRNAs$first17, gRNAs$last3_PAM))
+# Create a mapping from sequences to gRNA ids
+sequence_id_map <- gRNAs %>%
+  select(id, first17, last3_PAM) %>%
+  pivot_longer(cols = c(first17, last3_PAM), names_to = "type", values_to = "sequence") %>%
+  group_by(sequence) %>%
+  summarise(gRNA_id = paste(unique(id), collapse = ",")) %>%
+  ungroup()
+
+# Convert the mapping to a named vector for efficient lookup
+sequence_to_id <- setNames(sequence_id_map$gRNA_id, sequence_id_map$sequence)
 
 # Function to process a BAM file
-process_bam_file <- function(bam_file, search_sequences) {
+process_bam_file <- function(bam_file, sequence_to_id) {
   sample_name <- basename(bam_file)
   sample_name <- sub("_with_header.bam$", "", sample_name)
   
@@ -58,16 +71,17 @@ process_bam_file <- function(bam_file, search_sequences) {
     first20 <- substr(read_seq, 1, min(20, read_len))
     last20 <- substr(read_seq, max(1, read_len - 19), read_len)
     
-    # Check for matches in the ends of the read
-    match_found <- FALSE
-    for (search_seq in search_sequences) {
-      if (str_detect(first20, fixed(search_seq)) || str_detect(last20, fixed(search_seq))) {
-        match_found <- TRUE
-        break
-      }
-    }
+    # Find all search_sequences that are present in first20 or last20
+    matched_sequences <- sequence_id_map$sequence[
+      str_detect(first20, fixed(sequence_id_map$sequence)) | 
+        str_detect(last20, fixed(sequence_id_map$sequence))
+    ]
     
-    if (match_found) {
+    if (length(matched_sequences) > 0) {
+      # Get the unique gRNA ids associated with the matched sequences
+      matched_gRNA_ids <- unique(unlist(strsplit(sequence_to_id[matched_sequences], ",")))
+      gRNA_ids_str <- paste(matched_gRNA_ids, collapse = ",")
+      
       # Initialize variables
       AAV_Start <- NA
       AAV_End <- NA
@@ -100,12 +114,14 @@ process_bam_file <- function(bam_file, search_sequences) {
       result <- data.frame(
         Sample = sample_name,
         Read_Name = read_name,
-        AAV_Start = AAV_Start,
-        AAV_End = AAV_End,
-        Host_Chromosome = Host_Chromosome,
-        Host_Start = Host_Start,
+        AAV_Start = ifelse(is.na(AAV_Start), "NA", AAV_Start),
+        AAV_End = ifelse(is.na(AAV_End), "NA", AAV_End),
+        Host_Chromosome = ifelse(is.na(Host_Chromosome), "NA", Host_Chromosome),
+        Host_Start = ifelse(is.na(Host_Start), "NA", Host_Start),
+        gRNA_id = gRNA_ids_str,
         stringsAsFactors = FALSE
       )
+      
       results_list[[length(results_list) + 1]] <- result
     }
   }
@@ -121,7 +137,7 @@ process_bam_file <- function(bam_file, search_sequences) {
 }
 
 # Get list of BAM files
-bam_files <- list.files(path = "aligned_bams", pattern = "_with_header.bam$", full.names = TRUE)
+bam_files <- list.files(path = "aligned_bams_test", pattern = "_with_header.bam$", full.names = TRUE)
 
 # Initialize a list to collect all results
 all_results_list <- list()
@@ -129,7 +145,7 @@ all_results_list <- list()
 # Process each BAM file
 for (bam_file in bam_files) {
   cat("Processing", bam_file, "\n")
-  bam_results <- process_bam_file(bam_file, search_sequences)
+  bam_results <- process_bam_file(bam_file, sequence_to_id)
   if (!is.null(bam_results)) {
     all_results_list[[length(all_results_list) + 1]] <- bam_results
   }
@@ -142,19 +158,19 @@ if (length(all_results_list) > 0) {
   all_results <- data.frame(
     Sample = character(),
     Read_Name = character(),
-    AAV_Start = numeric(),
-    AAV_End = numeric(),
+    AAV_Start = character(),
+    AAV_End = character(),
     Host_Chromosome = character(),
-    Host_Start = numeric(),
+    Host_Start = character(),
+    gRNA_id = character(),
     stringsAsFactors = FALSE
   )
 }
 
 # Write the results to a CSV file
-write.csv(all_results, file = "cut_sites.csv", row.names = FALSE)
+write.csv(all_results, file = "cut_sites_with_gRNA_id.csv", row.names = FALSE)
 
-cat("Analysis complete. Results saved to cut_sites.csv\n")
-
+cat("Analysis complete. Results saved to cut_sites_with_gRNA_id.csv\n")
 
 
 
