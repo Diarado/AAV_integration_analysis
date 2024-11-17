@@ -7,12 +7,17 @@ library(tidyverse)
 # Set constants
 ALIGN_DIR <- "D:/jiahe/IU/AAV/HeLa_project/aligned_bams"
 AAV_REF_NAME <- "pssAAV-CB-EGFP"  
-OUTPUT_CSV <- "D:/jiahe/IU/AAV/HeLa_project/output/aav_reads_locations.csv"
+OUTPUT_CSV <- "D:/jiahe/IU/AAV/HeLa_project/output/aav_reads_locations_with_readlen.csv"
 
 # Retrieve aligned BAM files
 print("Retrieving BAM files...")
 bam_files <- list.files(ALIGN_DIR, pattern = "_with_header\\.bam$", full.names = TRUE)
 print(paste("Total number of BAM files found:", length(bam_files)))
+
+# Function to compute alignment length on the reference
+compute_alignment_length <- function(cigar_string) {
+  cigarWidthAlongReferenceSpace(cigar_string)
+}
 
 # Function to find reads aligned to AAV and save their locations
 findAAVReads <- function(aligned_bam) {
@@ -52,6 +57,8 @@ findAAVReads <- function(aligned_bam) {
     AAV_End = end(aav_reads),
     Host_Chromosome = rep(NA, length(aav_reads)),  # Initialize with NA
     Host_Start = rep(NA, length(aav_reads)),       # Initialize with NA
+    Host_Read_Start = rep(NA, length(aav_reads)),  # New column for host read start
+    Host_Read_End = rep(NA, length(aav_reads)),    # New column for host read end
     stringsAsFactors = FALSE
   )
   
@@ -70,16 +77,24 @@ findAAVReads <- function(aligned_bam) {
     for (i in seq_along(sa_list)) {
       current_sa <- sa_list[[i]]
       
-      # Ensure the list is not NULL and the first element is valid
+      # Ensure the list is not NULL and has entries
       if (!is.null(current_sa) && length(current_sa) > 0) {
-        first_entry <- current_sa[[1]]
-        if (length(first_entry) > 0 && !is.na(first_entry[1]) && first_entry[1] != "" && !grepl(AAV_REF_NAME, first_entry[1])) {
-          sa_fields <- strsplit(first_entry[1], ",")[[1]]
-          
-          if (length(sa_fields) >= 2) {  # Ensure we have enough fields to extract
-            host_start <- as.numeric(sa_fields[2])
-            aav_data$Host_Chromosome[i] <- sa_fields[1]
-            aav_data$Host_Start[i] <- host_start
+        entries <- unlist(current_sa)
+        for (entry in entries) {
+          if (length(entry) > 0 && !is.na(entry) && entry != "") {
+            sa_fields <- strsplit(entry, ",")[[1]]
+            if (length(sa_fields) >= 4 && !grepl(AAV_REF_NAME, sa_fields[1])) {  # Ensure we have enough fields and not AAV_REF_NAME
+              host_start <- as.numeric(sa_fields[2])
+              strand <- sa_fields[3]
+              cigar_string <- sa_fields[4]
+              host_alignment_length <- compute_alignment_length(cigar_string)
+              host_end <- host_start + host_alignment_length - 1
+              aav_data$Host_Chromosome[i] <- sa_fields[1]
+              aav_data$Host_Start[i] <- host_start  # Leave Host_Start as it is
+              aav_data$Host_Read_Start[i] <- host_start  # New column value
+              aav_data$Host_Read_End[i] <- host_end      # New column value
+              break  # We found a host alignment, no need to look further
+            }
           }
         }
       }
