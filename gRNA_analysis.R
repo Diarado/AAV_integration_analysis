@@ -32,28 +32,36 @@ sequence_id_map <- gRNAs %>%
 sequence_to_id <- setNames(sequence_id_map$gRNA_id, sequence_id_map$sequence)
 
 # Function to process a BAM file
-process_bam_file <- function(bam_file, sequence_to_id) {
+process_bam_file <- function(bam_file, sequence_to_id, min_alignment_quality = 20, min_read_length = 40) {
   sample_name <- basename(bam_file)
   sample_name <- sub("_with_header.bam$", "", sample_name)
   
-  # Open the BAM file
+  # Open the BAM file with additional parameters for quality
   bam <- BamFile(bam_file)
   
-  # Define parameters to extract necessary information
-  param <- ScanBamParam(what = c("qname", "seq", "rname", "pos"))
+  # Include mapq (mapping quality) in the parameters
+  param <- ScanBamParam(
+    what = c("qname", "seq", "rname", "pos", "mapq", "cigar"),
+    mapqFilter = min_alignment_quality
+  )
+  
+  # Read BAM data
   bam_data <- scanBam(bam, param = param)[[1]]
   
-  # Create a data frame from the BAM data
+  # Create a data frame from the BAM data with quality information
   bam_df <- data.frame(
     Read_Name = bam_data$qname,
     Sequence = as.character(bam_data$seq),
     Ref_Name = as.character(bam_data$rname),
     Position = bam_data$pos,
+    MapQ = bam_data$mapq,
+    CIGAR = bam_data$cigar,
     stringsAsFactors = FALSE
   )
   
-  # Remove reads with NA sequences (unmapped reads)
-  bam_df <- bam_df[!is.na(bam_df$Sequence), ]
+  # Remove reads with NA sequences or below minimum length
+  bam_df <- bam_df[!is.na(bam_df$Sequence) & 
+                     nchar(bam_df$Sequence) >= min_read_length, ]
   
   # Initialize a list to store results
   results_list <- list()
@@ -61,76 +69,136 @@ process_bam_file <- function(bam_file, sequence_to_id) {
   # Get unique read names
   read_names <- unique(bam_df$Read_Name)
   
+  # Progress indicator
+  total_reads <- length(read_names)
+  cat(sprintf("Processing %d reads for %s\n", total_reads, sample_name))
+  progress_step <- max(1, floor(total_reads/10))
+  
   # Loop through each read
-  for (read_name in read_names) {
+  for (i in seq_along(read_names)) {
+    # Progress update
+    if (i %% progress_step == 0) {
+      cat(sprintf("Processed %d%% of reads...\n", floor(i/total_reads * 100)))
+    }
+    
+    read_name <- read_names[i]
     read_records <- bam_df[bam_df$Read_Name == read_name, ]
-    read_seq <- read_records$Sequence[1]  # Assuming sequence is the same across alignments
+    
+    # Skip if less than 2 alignments (not a junction)
+    if (nrow(read_records) < 2) {
+      next
+    }
+    
+    read_seq <- read_records$Sequence[1]
     read_len <- nchar(read_seq)
+    
+    # Skip if read is too short
+    if (read_len < min_read_length) {
+      next
+    }
     
     # Get the first and last 20 bp of the read
     first20 <- substr(read_seq, 1, min(20, read_len))
     last20 <- substr(read_seq, max(1, read_len - 19), read_len)
     
-    # Find all search_sequences that are present in first20 or last20
+    # Strict matching using exact matches
     matched_sequences <- sequence_id_map$sequence[
-      str_detect(first20, fixed(sequence_id_map$sequence)) | 
-        str_detect(last20, fixed(sequence_id_map$sequence))
+      sapply(sequence_id_map$sequence, function(seq) {
+        # Check for exact matches at the start or end
+        (nchar(seq) <= nchar(first20) && startsWith(first20, seq)) || 
+          (nchar(seq) <= nchar(last20) && endsWith(last20, seq))
+      })
     ]
     
     if (length(matched_sequences) > 0) {
-      # Get the unique gRNA ids associated with the matched sequences
+      # Validate junction: check for both AAV and host genome alignments
+      has_aav <- any(grepl("AAV", read_records$Ref_Name, ignore.case = TRUE))
+      has_host <- any(grepl("^chr", read_records$Ref_Name, ignore.case = TRUE))
+      
+      if (!(has_aav && has_host)) {
+        next  # Skip if not a true junction
+      }
+      
+      # Get unique gRNA ids for matched sequences
       matched_gRNA_ids <- unique(unlist(strsplit(sequence_to_id[matched_sequences], ",")))
       gRNA_ids_str <- paste(matched_gRNA_ids, collapse = ",")
       
-      # Initialize variables
+      # Initialize alignment variables
       AAV_Start <- NA
       AAV_End <- NA
       Host_Chromosome <- NA
       Host_Start <- NA
+      AAV_MapQ <- NA
+      Host_MapQ <- NA
       
-      # Check for alignments to AAV and host
-      for (i in seq_len(nrow(read_records))) {
-        ref_name <- read_records$Ref_Name[i]
-        position <- read_records$Position[i]
+      # Process alignments with quality checks
+      for (j in seq_len(nrow(read_records))) {
+        ref_name <- read_records$Ref_Name[j]
+        position <- read_records$Position[j]
+        mapq <- read_records$MapQ[j]
         
         if (grepl("AAV", ref_name, ignore.case = TRUE)) {
-          # Alignment to AAV
-          if (is.na(AAV_Start) || position < AAV_Start) {
+          # Update AAV alignment if better quality
+          if (is.na(AAV_MapQ) || mapq > AAV_MapQ) {
             AAV_Start <- position
-          }
-          if (is.na(AAV_End) || position > AAV_End) {
-            AAV_End <- position
+            AAV_End <- position  # Will be updated with CIGAR if needed
+            AAV_MapQ <- mapq
           }
         } else if (grepl("^chr", ref_name, ignore.case = TRUE)) {
-          # Alignment to host genome
-          Host_Chromosome <- ref_name
-          if (is.na(Host_Start) || position < Host_Start) {
+          # Update host genome alignment if better quality
+          if (is.na(Host_MapQ) || mapq > Host_MapQ) {
+            Host_Chromosome <- ref_name
             Host_Start <- position
+            Host_MapQ <- mapq
           }
         }
       }
       
-      # Store the result
-      result <- data.frame(
-        Sample = sample_name,
-        Read_Name = read_name,
-        AAV_Start = ifelse(is.na(AAV_Start), "NA", AAV_Start),
-        AAV_End = ifelse(is.na(AAV_End), "NA", AAV_End),
-        Host_Chromosome = ifelse(is.na(Host_Chromosome), "NA", Host_Chromosome),
-        Host_Start = ifelse(is.na(Host_Start), "NA", Host_Start),
-        gRNA_id = gRNA_ids_str,
-        stringsAsFactors = FALSE
-      )
-      
-      results_list[[length(results_list) + 1]] <- result
+      # Only store results if both alignments meet quality threshold
+      if (!is.na(AAV_MapQ) && !is.na(Host_MapQ) && 
+          AAV_MapQ >= min_alignment_quality && 
+          Host_MapQ >= min_alignment_quality) {
+        
+        # Store the result
+        result <- data.frame(
+          Sample = sample_name,
+          Read_Name = read_name,
+          AAV_Start = ifelse(is.na(AAV_Start), "NA", AAV_Start),
+          AAV_End = ifelse(is.na(AAV_End), "NA", AAV_End),
+          AAV_MapQ = AAV_MapQ,
+          Host_Chromosome = ifelse(is.na(Host_Chromosome), "NA", Host_Chromosome),
+          Host_Start = ifelse(is.na(Host_Start), "NA", Host_Start),
+          Host_MapQ = Host_MapQ,
+          gRNA_id = gRNA_ids_str,
+          Read_Length = read_len,
+          stringsAsFactors = FALSE
+        )
+        
+        results_list[[length(results_list) + 1]] <- result
+      }
     }
   }
   
   # Combine results into a data frame
   if (length(results_list) > 0) {
     results_df <- do.call(rbind, results_list)
+    
+    # Add additional summary statistics
+    results_df <- results_df %>%
+      group_by(gRNA_id) %>%
+      mutate(
+        Support_Reads = n(),
+        Unique_Junction_Sites = n_distinct(paste(Host_Chromosome, Host_Start, AAV_Start))
+      ) %>%
+      ungroup()
+    
   } else {
     results_df <- NULL
+  }
+  
+  cat(sprintf("Completed processing %s\n", sample_name))
+  if (!is.null(results_df)) {
+    cat(sprintf("Found %d junction reads\n", nrow(results_df)))
   }
   
   return(results_df)
