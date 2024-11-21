@@ -12,12 +12,14 @@ setwd("D:/Jiahe/IU/AAV/HeLa_project")
 # Read the updated gRNAs.xlsx file with 'id' column
 gRNAs <- read_excel("gRNAs.xlsx")
 
-# Generate sequences to search for
+# Generate sequences to search for and add cut site information
 gRNAs <- gRNAs %>%
   mutate(
     first17 = substr(sequence, 1, 17),
     last3 = substr(sequence, nchar(sequence) - 2, nchar(sequence)),
-    last3_PAM = paste0(last3, PAM)
+    last3_PAM = paste0(last3, PAM),
+    # Add cut site position (typically 3bp upstream of PAM)
+    cut_site_position = nchar(sequence) - 3
   )
 
 # Create a mapping from sequences to gRNA ids
@@ -32,7 +34,7 @@ sequence_id_map <- gRNAs %>%
 sequence_to_id <- setNames(sequence_id_map$gRNA_id, sequence_id_map$sequence)
 
 # Function to process a BAM file
-process_bam_file <- function(bam_file, sequence_to_id, min_alignment_quality = 20, min_read_length = 40) {
+process_bam_file <- function(bam_file, sequence_to_id, gRNAs_info = gRNAs, min_alignment_quality = 20, min_read_length = 40) {
   sample_name <- basename(bam_file)
   sample_name <- sub("_with_header.bam$", "", sample_name)
   
@@ -104,7 +106,6 @@ process_bam_file <- function(bam_file, sequence_to_id, min_alignment_quality = 2
     # Strict matching using exact matches
     matched_sequences <- sequence_id_map$sequence[
       sapply(sequence_id_map$sequence, function(seq) {
-        # Check for exact matches at the start or end
         (nchar(seq) <= nchar(first20) && startsWith(first20, seq)) || 
           (nchar(seq) <= nchar(last20) && endsWith(last20, seq))
       })
@@ -119,62 +120,70 @@ process_bam_file <- function(bam_file, sequence_to_id, min_alignment_quality = 2
         next  # Skip if not a true junction
       }
       
-      # Get unique gRNA ids for matched sequences
+      # Get matched gRNA information
       matched_gRNA_ids <- unique(unlist(strsplit(sequence_to_id[matched_sequences], ",")))
-      gRNA_ids_str <- paste(matched_gRNA_ids, collapse = ",")
       
-      # Initialize alignment variables
-      AAV_Start <- NA
-      AAV_End <- NA
-      Host_Chromosome <- NA
-      Host_Start <- NA
-      AAV_MapQ <- NA
-      Host_MapQ <- NA
-      
-      # Process alignments with quality checks
-      for (j in seq_len(nrow(read_records))) {
-        ref_name <- read_records$Ref_Name[j]
-        position <- read_records$Position[j]
-        mapq <- read_records$MapQ[j]
+      # For each matched gRNA, process the cut site information
+      for (gRNA_id in matched_gRNA_ids) {
+        gRNA_info <- gRNAs_info[gRNAs_info$id == gRNA_id, ]
+        cut_site_pos <- gRNA_info$cut_site_position
         
-        if (grepl("AAV", ref_name, ignore.case = TRUE)) {
-          # Update AAV alignment if better quality
-          if (is.na(AAV_MapQ) || mapq > AAV_MapQ) {
-            AAV_Start <- position
-            AAV_End <- position  # Will be updated with CIGAR if needed
-            AAV_MapQ <- mapq
-          }
-        } else if (grepl("^chr", ref_name, ignore.case = TRUE)) {
-          # Update host genome alignment if better quality
-          if (is.na(Host_MapQ) || mapq > Host_MapQ) {
-            Host_Chromosome <- ref_name
-            Host_Start <- position
-            Host_MapQ <- mapq
+        # Initialize alignment variables
+        AAV_Start <- NA
+        AAV_End <- NA
+        Host_Chromosome <- NA
+        Host_Start <- NA
+        AAV_MapQ <- NA
+        Host_MapQ <- NA
+        
+        # Process alignments with quality checks
+        for (j in seq_len(nrow(read_records))) {
+          ref_name <- read_records$Ref_Name[j]
+          position <- read_records$Position[j]
+          mapq <- read_records$MapQ[j]
+          
+          if (grepl("AAV", ref_name, ignore.case = TRUE)) {
+            if (is.na(AAV_MapQ) || mapq > AAV_MapQ) {
+              AAV_Start <- position
+              AAV_End <- position
+              AAV_MapQ <- mapq
+            }
+          } else if (grepl("^chr", ref_name, ignore.case = TRUE)) {
+            if (is.na(Host_MapQ) || mapq > Host_MapQ) {
+              Host_Chromosome <- ref_name
+              Host_Start <- position
+              Host_MapQ <- mapq
+            }
           }
         }
-      }
-      
-      # Only store results if both alignments meet quality threshold
-      if (!is.na(AAV_MapQ) && !is.na(Host_MapQ) && 
-          AAV_MapQ >= min_alignment_quality && 
-          Host_MapQ >= min_alignment_quality) {
         
-        # Store the result
-        result <- data.frame(
-          Sample = sample_name,
-          Read_Name = read_name,
-          AAV_Start = ifelse(is.na(AAV_Start), "NA", AAV_Start),
-          AAV_End = ifelse(is.na(AAV_End), "NA", AAV_End),
-          AAV_MapQ = AAV_MapQ,
-          Host_Chromosome = ifelse(is.na(Host_Chromosome), "NA", Host_Chromosome),
-          Host_Start = ifelse(is.na(Host_Start), "NA", Host_Start),
-          Host_MapQ = Host_MapQ,
-          gRNA_id = gRNA_ids_str,
-          Read_Length = read_len,
-          stringsAsFactors = FALSE
-        )
-        
-        results_list[[length(results_list) + 1]] <- result
+        # Only store results if both alignments meet quality threshold
+        if (!is.na(AAV_MapQ) && !is.na(Host_MapQ) && 
+            AAV_MapQ >= min_alignment_quality && 
+            Host_MapQ >= min_alignment_quality) {
+          
+          # Calculate distance from cut site
+          distance_from_cut <- abs(as.numeric(AAV_Start) - as.numeric(cut_site_pos))
+          
+          result <- data.frame(
+            Sample = sample_name,
+            Read_Name = read_name,
+            gRNA_id = gRNA_id,
+            gRNA_Sequence = gRNA_info$sequence,
+            Cut_Site_Position = cut_site_pos,
+            AAV_Start = AAV_Start,
+            AAV_End = AAV_End,
+            AAV_MapQ = AAV_MapQ,
+            Host_Chromosome = Host_Chromosome,
+            Host_Start = Host_Start,
+            Host_MapQ = Host_MapQ,
+            Distance_From_Cut = distance_from_cut,
+            Read_Length = read_len,
+            stringsAsFactors = FALSE
+          )
+          
+          results_list[[length(results_list) + 1]] <- result
+        }
       }
     }
   }
@@ -188,7 +197,9 @@ process_bam_file <- function(bam_file, sequence_to_id, min_alignment_quality = 2
       group_by(gRNA_id) %>%
       mutate(
         Support_Reads = n(),
-        Unique_Junction_Sites = n_distinct(paste(Host_Chromosome, Host_Start, AAV_Start))
+        Unique_Junction_Sites = n_distinct(paste(Host_Chromosome, Host_Start, AAV_Start)),
+        Mean_Distance_From_Cut = mean(Distance_From_Cut),
+        Reads_Within_10bp_Of_Cut = sum(Distance_From_Cut <= 10)
       ) %>%
       ungroup()
     
@@ -205,7 +216,7 @@ process_bam_file <- function(bam_file, sequence_to_id, min_alignment_quality = 2
 }
 
 # Get list of BAM files
-bam_files <- list.files(path = "aligned_bams_test", pattern = "_with_header.bam$", full.names = TRUE)
+bam_files <- list.files(path = "aligned_bams", pattern = "_with_header.bam$", full.names = TRUE)
 
 # Initialize a list to collect all results
 all_results_list <- list()
@@ -222,75 +233,40 @@ for (bam_file in bam_files) {
 # Combine all results into a single data frame
 if (length(all_results_list) > 0) {
   all_results <- do.call(rbind, all_results_list)
+  
+  # Create a summary data frame
+  summary_results <- all_results %>%
+    group_by(gRNA_id, gRNA_Sequence) %>%
+    summarize(
+      Total_Reads = n(),
+      Unique_Integration_Sites = n_distinct(paste(Host_Chromosome, Host_Start)),
+      Mean_Distance_From_Cut = mean(Distance_From_Cut),
+      Median_Distance_From_Cut = median(Distance_From_Cut),
+      Reads_Within_10bp = sum(Distance_From_Cut <= 10),
+      Mean_AAV_MapQ = mean(AAV_MapQ),
+      Mean_Host_MapQ = mean(Host_MapQ),
+      .groups = 'drop'
+    ) %>%
+    arrange(desc(Total_Reads))
+  
+  # Write both detailed and summary results
+  write.csv(all_results, file = "detailed_cut_sites_with_gRNA.csv", row.names = FALSE)
+  write.csv(summary_results, file = "cut_sites_summary_by_gRNA.csv", row.names = FALSE)
 } else {
   all_results <- data.frame(
     Sample = character(),
     Read_Name = character(),
+    gRNA_id = character(),
+    gRNA_Sequence = character(),
+    Cut_Site_Position = numeric(),
     AAV_Start = character(),
     AAV_End = character(),
     Host_Chromosome = character(),
     Host_Start = character(),
-    gRNA_id = character(),
+    Distance_From_Cut = numeric(),
     stringsAsFactors = FALSE
   )
+  write.csv(all_results, file = "detailed_cut_sites_with_gRNA.csv", row.names = FALSE)
 }
 
-# Write the results to a CSV file
-write.csv(all_results, file = "cut_sites_with_gRNA_id.csv", row.names = FALSE)
-
-cat("Analysis complete. Results saved to cut_sites_with_gRNA_id.csv\n")
-
-
-
-
-
-
-
-
-
-# 
-# 
-# 
-# # statistical analysis
-# # 4. Define the get_mode Function
-# get_mode <- function(v) {
-#   uniqv <- unique(v)
-#   tab <- tabulate(match(v, uniqv))
-#   mode_values <- uniqv[tab == max(tab)]
-#   return(mode_values)
-# }
-# 
-# # 5. Calculate Basic Statistics
-# max_value <- max(difference, na.rm = TRUE)
-# min_value <- min(difference, na.rm = TRUE)
-# median_value <- median(difference, na.rm = TRUE)
-# mean_value <- mean(difference, na.rm = TRUE)
-# sd_value <- sd(difference, na.rm = TRUE)
-# quantiles <- quantile(difference, probs = c(0.25, 0.5, 0.75), na.rm = TRUE)
-# 
-# # 6. Calculate Mode
-# mode_value <- get_mode(difference)
-# 
-# # 7. Display the Results
-# cat("Statistics for AAV_End - AAV_Start:\n")
-# cat("Maximum:", max_value, "\n")
-# cat("Minimum:", min_value, "\n")
-# cat("Median:", median_value, "\n")
-# cat("Mean:", mean_value, "\n")
-# cat("Standard Deviation:", sd_value, "\n")
-# cat("Quantiles (25%, 50%, 75%):\n")
-# print(quantiles)
-# cat("Mode:", paste(mode_value, collapse = ", "), "\n")
-# 
-# # Filter for barcode13 (where '13' appears in the specified position)
-# barcode13_cnt <- data |>
-#   filter(!is.na(Host_Chromosome) & substr(Sample, 22, 23) == "13")
-# 
-# # Filter for barcode14 (where '14' appears in the specified position)
-# barcode14_cnt <- data |>
-#   filter(!is.na(Host_Chromosome) & substr(Sample, 22, 23) == "14")
-# 
-# 
-# write_csv(barcode13_cnt, "D:/Jiahe/IU/AAV/HeLa_project/output/aav_13_integrations.csv")
-# write_csv(barcode14_cnt, "D:/Jiahe/IU/AAV/HeLa_project/output/aav_14_integrations.csv")
-# find gRNA seq
+cat("Analysis complete. Results saved to detailed_cut_sites_with_gRNA.csv and cut_sites_summary_by_gRNA.csv\n")
