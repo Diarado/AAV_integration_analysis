@@ -1,4 +1,3 @@
-# Load necessary libraries
 library(Rsamtools)
 library(Biostrings)
 library(dplyr)
@@ -9,7 +8,6 @@ library(tidyr)
 # Set working directory
 setwd("D:/Jiahe/IU/AAV/HeLa_project")
 
-# Read the updated gRNAs.xlsx file with 'id' column
 gRNAs <- read_excel("gRNAs.xlsx")
 
 # Generate sequences to search for and add cut site information
@@ -104,6 +102,8 @@ process_bam_file <- function(bam_file, sequence_to_id, gRNAs_info = gRNAs, min_a
     last20 <- substr(read_seq, max(1, read_len - 19), read_len)
     
     # Strict matching using exact matches
+    # TODO: add some tolerance. Allow <= 1 indel, insertion or deletion
+    # allow <= 2 bp shift
     matched_sequences <- sequence_id_map$sequence[
       sapply(sequence_id_map$sequence, function(seq) {
         (nchar(seq) <= nchar(first20) && startsWith(first20, seq)) || 
