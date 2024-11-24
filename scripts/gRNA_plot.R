@@ -1,15 +1,16 @@
-# Load required libraries
 library(dplyr)
 library(ggplot2)
 library(Biostrings)
 library(readr)
+library(RColorBrewer)  
 
-# File paths - modify these to match your file locations
 AAV_REF_PATH <- "D:/Jiahe/IU/AAV/HeLa_project/pssAAV-CB-EGFP_ARM.fa"
 AAV_READS_PATH <- "D:/Jiahe/IU/AAV/HeLa_project/output/aav_reads_locations.csv"
 CUT_SITES_PATH <- "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA.csv"
 
-# Function to read and process the data
+cut_sites <- read.csv(CUT_SITES_PATH)
+AAV_unique_reads <- unique(cut_sites$Read_Name)
+
 load_and_process_data <- function(aav_reads_path, cut_sites_path, aav_ref_path) {
   # Read AAV reference genome and get length
   aav_seq <- readDNAStringSet(aav_ref_path)
@@ -30,6 +31,7 @@ load_and_process_data <- function(aav_reads_path, cut_sites_path, aav_ref_path) 
   
   # Read cut sites data and ensure proper data types
   cut_sites <- read.csv(cut_sites_path, stringsAsFactors = FALSE) %>%
+    distinct(Read_Name, .keep_all = TRUE) %>%
     select(Sample, Read_Name, gRNA_id, Cut_Site_Position, AAV_Start, AAV_End) %>%
     mutate(
       Sample = as.character(Sample),
@@ -72,14 +74,31 @@ prepare_plot_data <- function(aav_reads, cut_sites) {
     distinct(Read_Name, .keep_all = TRUE) %>%
     mutate(
       Absolute_Cut_Position = AAV_Start.aav + Cut_Site_Position - 1,
-      Read_Index = row_number()  # Add index for vertical positioning
+      Read_Index = row_number(),  # Add index for vertical positioning
+      gRNA_id = factor(gRNA_id)   # Convert gRNA_id to factor for proper color mapping
     )
   
   return(merged_data)
 }
 
-# Function to create the visualization
+# Function to create the visualization with gRNA color coding
 create_aav_alignment_plot <- function(merged_data, aav_length) {
+  # Get number of unique gRNA IDs
+  n_grnas <- length(unique(merged_data$gRNA_id))
+  
+  # Create color palette based on number of gRNAs
+  # Using a combination of colorbrewer palettes for more distinct colors
+  if(n_grnas <= 8) {
+    colors <- brewer.pal(max(n_grnas, 3), "Set2")
+  } else {
+    # Combine multiple color palettes for more colors
+    colors <- c(
+      brewer.pal(8, "Set2"),
+      brewer.pal(8, "Set1"),
+      brewer.pal(8, "Dark2")
+    )[1:n_grnas]
+  }
+  
   ggplot() +
     # Base genome line
     geom_segment(
@@ -88,20 +107,21 @@ create_aav_alignment_plot <- function(merged_data, aav_length) {
       size = 1
     ) +
     
-    # Plot reads as gray segments
+    # Plot reads as colored segments based on gRNA_id
     geom_segment(
       data = merged_data,
       aes(
         x = AAV_Start.aav,
         xend = AAV_End.aav,
         y = Read_Index,
-        yend = Read_Index
+        yend = Read_Index,
+        color = gRNA_id
       ),
-      color = "gray50",
-      size = 0.5
+      size = 0.5,
+      alpha = 0.7
     ) +
     
-    # Plot cut sites as red marks
+    # Plot cut sites as black marks
     geom_segment(
       data = merged_data,
       aes(
@@ -110,13 +130,19 @@ create_aav_alignment_plot <- function(merged_data, aav_length) {
         y = Read_Index - 0.2,
         yend = Read_Index + 0.2
       ),
-      color = "red",
+      color = "black",
       size = 0.5
     ) +
     
     # Customize the plot appearance
+    scale_color_manual(
+      values = colors,
+      name = "gRNA ID"
+    ) +
+    
     labs(
       title = "AAV Reads Alignment with Cut Sites",
+      subtitle = paste("Colored by gRNA ID (", n_grnas, " unique gRNAs)", sep=""),
       x = "AAV Genome Position",
       y = ""
     ) +
@@ -127,8 +153,12 @@ create_aav_alignment_plot <- function(merged_data, aav_length) {
       axis.text.y = element_blank(),
       axis.ticks.y = element_blank(),
       plot.title = element_text(hjust = 0.5, size = 14),
+      plot.subtitle = element_text(hjust = 0.5, size = 12),
       axis.title.x = element_text(size = 12),
-      axis.text.x = element_text(size = 10)
+      axis.text.x = element_text(size = 10),
+      legend.position = "right",
+      legend.title = element_text(size = 12),
+      legend.text = element_text(size = 10)
     ) +
     scale_x_continuous(
       limits = c(0, aav_length),
@@ -138,7 +168,17 @@ create_aav_alignment_plot <- function(merged_data, aav_length) {
 
 # Function to generate summary statistics
 generate_summary_stats <- function(merged_data) {
-  summary_stats <- data.frame(
+  # Add gRNA-specific statistics
+  grna_stats <- merged_data %>%
+    group_by(gRNA_id) %>%
+    summarise(
+      reads_count = n(),
+      mean_cut_position = mean(Absolute_Cut_Position),
+      sd_cut_position = sd(Absolute_Cut_Position)
+    )
+  
+  # Overall statistics
+  overall_stats <- data.frame(
     total_reads = length(unique(merged_data$Read_Name)),
     unique_cut_sites = length(unique(merged_data$Cut_Site_Position)),
     mean_read_length = mean(merged_data$AAV_End.aav - merged_data$AAV_Start.aav),
@@ -146,10 +186,13 @@ generate_summary_stats <- function(merged_data) {
     unique_grna_ids = length(unique(merged_data$gRNA_id))
   )
   
-  return(summary_stats)
+  return(list(
+    overall_stats = overall_stats,
+    grna_stats = grna_stats
+  ))
 }
 
-# Main execution
+
 main <- function() {
   tryCatch({
     # Load and process data
@@ -163,7 +206,10 @@ main <- function() {
     # Generate summary statistics
     cat("\nGenerating summary statistics...\n")
     stats <- generate_summary_stats(plot_data)
-    print(stats)
+    cat("\nOverall Statistics:\n")
+    print(stats$overall_stats)
+    cat("\ngRNA-specific Statistics:\n")
+    print(stats$grna_stats)
     
     # Create visualization
     cat("\nCreating visualization...\n")
