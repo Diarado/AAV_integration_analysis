@@ -4,11 +4,13 @@ library(dplyr)
 library(stringr)
 library(readxl)
 library(tidyr)
+library(stringi)
 
 # Set working directory
 setwd("D:/Jiahe/IU/AAV/HeLa_project")
 
 gRNAs <- read_excel("gRNAs.xlsx")
+barcodes <- read_excel("Nanopore Native barcodes list.xlsx")
 
 # Generate sequences to search for and add cut site information
 gRNAs <- gRNAs %>%
@@ -16,7 +18,6 @@ gRNAs <- gRNAs %>%
     first17 = substr(sequence, 1, 17),
     last3 = substr(sequence, nchar(sequence) - 2, nchar(sequence)),
     last3_PAM = paste0(last3, PAM),
-    # Add cut site position (typically 3bp upstream of PAM)
     cut_site_position = nchar(sequence) - 3
   )
 
@@ -30,6 +31,71 @@ sequence_id_map <- gRNAs %>%
 
 # Convert the mapping to a named vector for efficient lookup
 sequence_to_id <- setNames(sequence_id_map$gRNA_id, sequence_id_map$sequence)
+
+# Function to count mismatches between two sequences
+count_mismatches <- function(seq1, seq2) {
+  # Ensure sequences are same length
+  if (nchar(seq1) != nchar(seq2)) return(Inf)
+  # Count positions where characters differ
+  sum(strsplit(seq1, '')[[1]] != strsplit(seq2, '')[[1]])
+}
+
+# Function to check for barcode matches with tolerance
+find_barcode_match <- function(sequence, barcode_list, max_mismatches = 5) {
+  for (barcode in barcode_list) {
+    if (nchar(sequence) >= nchar(barcode)) {
+      mismatches <- count_mismatches(
+        substr(sequence, 1, nchar(barcode)),
+        barcode
+      )
+      if (mismatches <= max_mismatches) return(TRUE)
+    }
+  }
+  return(FALSE)
+}
+
+# Function to trim adapter tails
+trim_adapters <- function(read_seq, barcode_seqs_forward, barcode_seqs_reverse) {
+  read_len <- nchar(read_seq)
+  
+  if (read_len <= 80) return(read_seq)
+  
+  # Check end tail
+  end_seq <- substr(read_seq, read_len - 79, read_len)
+  if (find_barcode_match(end_seq, barcode_seqs_forward)) {
+    read_seq <- substr(read_seq, 1, read_len - 80)
+  }
+  
+  # After trimming end, check if length still > 80 for start tail
+  read_len <- nchar(read_seq)
+  if (read_len > 80) {
+    start_seq <- substr(read_seq, 1, 80)
+    start_seq_rev <- stringi::stri_reverse(start_seq)
+    if (find_barcode_match(start_seq_rev, barcode_seqs_forward)) {
+      read_seq <- substr(read_seq, 81, read_len)
+    }
+  }
+  
+  return(read_seq)
+}
+
+# Function to find sequence matches with tolerance
+find_sequence_matches <- function(target_seq, reference_seq, max_mismatches = 5) {
+  target_len <- nchar(target_seq)
+  ref_len <- nchar(reference_seq)
+  
+  if (target_len < ref_len) return(FALSE)
+  
+  # Check start of sequence
+  start_seq <- substr(target_seq, 1, ref_len)
+  if (count_mismatches(start_seq, reference_seq) <= max_mismatches) return(TRUE)
+  
+  # Check end of sequence
+  end_seq <- substr(target_seq, target_len - ref_len + 1, target_len)
+  if (count_mismatches(end_seq, reference_seq) <= max_mismatches) return(TRUE)
+  
+  return(FALSE)
+}
 
 # Function to process a BAM file
 process_bam_file <- function(bam_file, sequence_to_id, gRNAs_info = gRNAs, min_alignment_quality = 20, min_read_length = 40) {
@@ -90,24 +156,24 @@ process_bam_file <- function(bam_file, sequence_to_id, gRNAs_info = gRNAs, min_a
     }
     
     read_seq <- read_records$Sequence[1]
+    
+    # Trim adapter sequences
+    read_seq <- trim_adapters(read_seq, 
+                              barcodes$`Forward sequence`, 
+                              barcodes$`Reverse sequence`)
+    
     read_len <- nchar(read_seq)
+    if (read_len < min_read_length) next
     
-    # Skip if read is too short
-    if (read_len < min_read_length) {
-      next
-    }
+    # Get the first and last 30 bp of the read
+    first30 <- substr(read_seq, 1, min(30, read_len))
+    last30 <- substr(read_seq, max(1, read_len - 29), read_len)
     
-    # Get the first and last 20 bp of the read
-    first20 <- substr(read_seq, 1, min(20, read_len))
-    last20 <- substr(read_seq, max(1, read_len - 19), read_len)
-    
-    # Strict matching using exact matches
-    # TODO: add some tolerance. Allow <= 1 indel, insertion or deletion
-    # allow <= 2 bp shift
+    # Find matches with tolerance
     matched_sequences <- sequence_id_map$sequence[
       sapply(sequence_id_map$sequence, function(seq) {
-        (nchar(seq) <= nchar(first20) && startsWith(first20, seq)) || 
-          (nchar(seq) <= nchar(last20) && endsWith(last20, seq))
+        find_sequence_matches(first30, seq) || 
+          find_sequence_matches(last30, seq)
       })
     ]
     
@@ -216,7 +282,7 @@ process_bam_file <- function(bam_file, sequence_to_id, gRNAs_info = gRNAs, min_a
 }
 
 # Get list of BAM files
-bam_files <- list.files(path = "aligned_bams", pattern = "_with_header.bam$", full.names = TRUE)
+bam_files <- list.files(path = "aligned_bams_test", pattern = "_with_header.bam$", full.names = TRUE)
 
 # Initialize a list to collect all results
 all_results_list <- list()
