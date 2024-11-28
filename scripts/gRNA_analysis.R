@@ -26,7 +26,10 @@ sequence_id_map <- gRNAs %>%
   select(id, first17, last3_PAM) %>%
   pivot_longer(cols = c(first17, last3_PAM), names_to = "type", values_to = "sequence") %>%
   group_by(sequence) %>%
-  summarise(gRNA_id = paste(unique(id), collapse = ",")) %>%
+  summarise(
+    gRNA_id = paste(unique(id), collapse = ","),
+    match_type = paste(unique(type), collapse = ",")  # Track which part matched
+  ) %>%
   ungroup()
 
 # Convert the mapping to a named vector for efficient lookup
@@ -64,9 +67,6 @@ trim_adapters <- function(read_seq, barcode_seqs_forward, barcode_seqs_reverse) 
   if (is.character(barcode_seqs_forward)) {
     barcode_seqs_forward <- DNAStringSet(barcode_seqs_forward)
   }
-  # if (is.character(barcode_seqs_reverse)) {
-  #   barcode_seqs_reverse <- DNAStringSet(barcode_seqs_reverse)
-  # }
   
   # Helper function to trim AT sequences
   trim_AT_sequence <- function(seq, from_start = TRUE) {
@@ -223,13 +223,14 @@ process_bam_file <- function(bam_file, sequence_to_id, gRNAs_info = gRNAs, min_a
     first30 <- substr(read_seq, 1, min(30, read_len))
     last30 <- substr(read_seq, max(1, read_len - 29), read_len)
     
-    # Find matches with tolerance
-    matched_sequences <- sequence_id_map$sequence[
+    # Find matches with tolerance and track match types
+    matched_info <- sequence_id_map[
       sapply(sequence_id_map$sequence, function(seq) {
         find_sequence_matches(first30, seq) || 
           find_sequence_matches(last30, seq)
-      })
-    ]
+      }), ]
+    
+    matched_sequences <- matched_info$sequence
     
     if (length(matched_sequences) > 0) {
       # Validate junction: check for both AAV and host genome alignments
@@ -285,6 +286,15 @@ process_bam_file <- function(bam_file, sequence_to_id, gRNAs_info = gRNAs, min_a
           # Calculate distance from cut site
           distance_from_cut <- abs(as.numeric(AAV_Start) - as.numeric(cut_site_pos))
           
+          # Get matching patterns for this gRNA
+          gRNA_matches <- matched_info[grepl(gRNA_id, matched_info$gRNA_id), ]
+          matching_patterns <- paste(
+            sprintf("%s (%s)", 
+                    gRNA_matches$sequence, 
+                    gRNA_matches$match_type),
+            collapse = "; "
+          )
+          
           result <- data.frame(
             Sample = sample_name,
             Read_Name = read_name,
@@ -299,6 +309,9 @@ process_bam_file <- function(bam_file, sequence_to_id, gRNAs_info = gRNAs, min_a
             Host_MapQ = Host_MapQ,
             Distance_From_Cut = distance_from_cut,
             Read_Length = read_len,
+            First_30bp = first30,
+            Last_30bp = last30,
+            Matched_Pattern = matching_patterns,
             stringsAsFactors = FALSE
           )
           
@@ -350,6 +363,7 @@ for (bam_file in bam_files) {
   }
 }
 
+# Combine all results into a single data frame
 # Combine all results into a single data frame
 if (length(all_results_list) > 0) {
   all_results <- do.call(rbind, all_results_list)
