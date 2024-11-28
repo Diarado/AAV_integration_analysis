@@ -41,7 +41,7 @@ count_mismatches <- function(seq1, seq2) {
 }
 
 # Function to check for barcode matches with tolerance
-find_barcode_match <- function(sequence, barcode_list, max_mismatches = 5) {
+find_barcode_match <- function(sequence, barcode_list, max_mismatches = 2) {
   for (barcode in barcode_list) {
     if (nchar(sequence) >= nchar(barcode)) {
       mismatches <- count_mismatches(
@@ -54,33 +54,87 @@ find_barcode_match <- function(sequence, barcode_list, max_mismatches = 5) {
   return(FALSE)
 }
 
-# Function to trim adapter tails
 trim_adapters <- function(read_seq, barcode_seqs_forward, barcode_seqs_reverse) {
-  read_len <- nchar(read_seq)
-  
-  if (read_len <= 80) return(read_seq)
-  
-  # Check end tail
-  end_seq <- substr(read_seq, read_len - 79, read_len)
-  if (find_barcode_match(end_seq, barcode_seqs_forward)) {
-    read_seq <- substr(read_seq, 1, read_len - 80)
+  # Convert input sequence to DNAString object
+  if (is.character(read_seq)) {
+    read_seq <- DNAString(read_seq)
   }
   
-  # After trimming end, check if length still > 80 for start tail
-  read_len <- nchar(read_seq)
-  if (read_len > 80) {
-    start_seq <- substr(read_seq, 1, 80)
-    start_seq_rev <- stringi::stri_reverse(start_seq)
-    if (find_barcode_match(start_seq_rev, barcode_seqs_forward)) {
-      read_seq <- substr(read_seq, 81, read_len)
+  # Convert barcodes to DNAStringSet objects
+  if (is.character(barcode_seqs_forward)) {
+    barcode_seqs_forward <- DNAStringSet(barcode_seqs_forward)
+  }
+  # if (is.character(barcode_seqs_reverse)) {
+  #   barcode_seqs_reverse <- DNAStringSet(barcode_seqs_reverse)
+  # }
+  
+  # Helper function to trim AT sequences
+  trim_AT_sequence <- function(seq, from_start = TRUE) {
+    if (length(seq) == 0) return(seq)
+    
+    seq_chars <- strsplit(as.character(seq), "")[[1]]
+    
+    if (from_start) {
+      # Find first position that's not A or T
+      non_at_pos <- which(!seq_chars %in% c("A", "T"))[1]
+      
+      if (!is.na(non_at_pos)) {
+        return(subseq(seq, start = non_at_pos))
+      }
+    } else {
+      # Find last position that's not A or T
+      non_at_pos <- rev(which(!seq_chars %in% c("A", "T")))[1]
+      
+      if (!is.na(non_at_pos)) {
+        return(subseq(seq, end = non_at_pos))
+      }
+    }
+    return(seq)
+  }
+  
+  # Process head of sequence
+  original_length <- length(read_seq)
+  head_processed <- FALSE
+  
+  # Iterate through barcodes
+  for (i in 1:length(barcode_seqs_forward)) {
+    barcode <- barcode_seqs_forward[[i]]
+    matches <- matchPattern(barcode, read_seq, max.mismatch = 1)
+    
+    if (length(matches) > 0) {
+      first_match_end <- end(matches)[1]
+      if (start(matches)[1] == 1) {  # Found at start
+        remaining_seq <- subseq(read_seq, start = first_match_end + 1)
+        read_seq <- trim_AT_sequence(remaining_seq, from_start = TRUE)
+        head_processed <- TRUE
+        break
+      }
     }
   }
   
-  return(read_seq)
+  # Only process tail if head processing didn't consume entire sequence
+  if (!head_processed || length(read_seq) > 0) {
+    for (i in 1:length(barcode_seqs_forward)) {
+      barcode <- barcode_seqs_forward[[i]]
+      matches <- matchPattern(barcode, read_seq, max.mismatch = 1)
+      
+      if (length(matches) > 0) {
+        last_match_idx <- length(matches)
+        if (end(matches)[last_match_idx] == length(read_seq)) {  # Found at end
+          remaining_seq <- subseq(read_seq, end = start(matches)[last_match_idx] - 1)
+          read_seq <- trim_AT_sequence(remaining_seq, from_start = FALSE)
+          break
+        }
+      }
+    }
+  }
+  
+  # Convert back to character if needed
+  return(as.character(read_seq))
 }
 
 # Function to find sequence matches with tolerance
-find_sequence_matches <- function(target_seq, reference_seq, max_mismatches = 5) {
+find_sequence_matches <- function(target_seq, reference_seq, max_mismatches = 2) {
   target_len <- nchar(target_seq)
   ref_len <- nchar(reference_seq)
   
@@ -335,4 +389,5 @@ if (length(all_results_list) > 0) {
   write.csv(all_results, file = "detailed_cut_sites_with_gRNA.csv", row.names = FALSE)
 }
 
-cat("Analysis complete. Results saved to detailed_cut_sites_with_gRNA.csv and cut_sites_summary_by_gRNA.csv\n")
+cat("Analysis complete. Results saved to detailed_cut_sites_with_gRNA.csv and 
+    cut_sites_summary_by_gRNA.csv\n")
