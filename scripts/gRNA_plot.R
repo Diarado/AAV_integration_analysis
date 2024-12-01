@@ -212,3 +212,4 @@ main <- function() {
 
 # Run the analysis
 main()
+unqiue_reads <- unique(all_results$Read_Name)
