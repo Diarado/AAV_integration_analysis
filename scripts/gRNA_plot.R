@@ -20,7 +20,6 @@ AAV_READS_PATH <- "D:/Jiahe/IU/AAV/HeLa_project/output/aav_reads_locations.csv"
 # write.csv(df, "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA_filtered.csv")
 
 CUT_SITES_PATH <- "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA_filtered.csv"
-print(length(unique(df$Read_Name)))
 
 load_and_process_data <- function(aav_reads_path, cut_sites_path, aav_ref_path) {
   # Read AAV reference genome and get length
