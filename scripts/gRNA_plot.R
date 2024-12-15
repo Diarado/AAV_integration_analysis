@@ -6,7 +6,21 @@ library(RColorBrewer)
 
 AAV_REF_PATH <- "D:/Jiahe/IU/AAV/HeLa_project/pssAAV-CB-EGFP_ARM.fa"
 AAV_READS_PATH <- "D:/Jiahe/IU/AAV/HeLa_project/output/aav_reads_locations.csv" 
-CUT_SITES_PATH <- "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA.csv"
+
+# CUT_SITES_PATH_unfiltered <- "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA.csv"
+# 
+# all_reads <- read.csv(AAV_READS_PATH)
+# all_reads <- all_reads |>
+#   filter(!is.na(Host_Chromosome))
+# 
+# df <- read.csv(CUT_SITES_PATH_unfiltered)
+# df <- df |>
+#   filter(Read_Name %in% all_reads$Read_Name)
+# 
+# write.csv(df, "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA_filtered.csv")
+
+CUT_SITES_PATH <- "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA_filtered.csv"
+print(length(unique(df$Read_Name)))
 
 load_and_process_data <- function(aav_reads_path, cut_sites_path, aav_ref_path) {
   # Read AAV reference genome and get length
@@ -166,6 +180,73 @@ generate_summary_stats <- function(position_data) {
   ))
 }
 
+create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
+  # Get unique Read_Names from filtered_reads
+  unique_filtered_reads <- filtered_reads %>%
+    distinct(Read_Name)
+  
+  # Filter reads that are in the filtered dataset, keeping only unique reads
+  plot_reads <- all_reads %>%
+    filter(Read_Name %in% unique_filtered_reads$Read_Name) %>%
+    # Add a y-position for each read (stacking them vertically)
+    group_by(Read_Name) %>%
+    mutate(
+      y_position = cur_group_id() * -1  # Negative to plot below the reference line
+    )
+  
+  # Create the reference genome data
+  reference_genome <- data.frame(
+    x = c(1, aav_length),
+    y = c(0, 0)
+  )
+  
+  # Create the plot
+  ggplot() +
+    # Add the reference genome line
+    geom_line(
+      data = reference_genome,
+      aes(x = x, y = y),
+      color = "black",
+      size = 1
+    ) +
+    # Add read alignment lines
+    geom_segment(
+      data = plot_reads,
+      aes(
+        x = AAV_Start,
+        xend = AAV_End,
+        y = y_position,
+        yend = y_position
+      ),
+      color = "lightblue",
+      size = 0.5,
+      alpha = 0.6
+    ) +
+    # Customize the appearance
+    labs(
+      title = "AAV Read Alignments",
+      subtitle = paste("Total unique reads:", nrow(unique_filtered_reads)),
+      x = "AAV Genome Position",
+      y = "Read Number"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 14),
+      plot.subtitle = element_text(hjust = 0.5, size = 12),
+      axis.title = element_text(size = 12),
+      axis.text = element_text(size = 10),
+      panel.grid.minor = element_blank(),
+      panel.grid.major.y = element_blank()
+    ) +
+    scale_x_continuous(
+      limits = c(0, aav_length),
+      breaks = seq(0, aav_length, by = 1000)
+    ) +
+    # Hide y-axis labels since they're just read indices
+    scale_y_continuous(labels = NULL)
+}
+
+# Update the main function to include the new visualization
 main <- function() {
   tryCatch({
     # Load and process data
@@ -184,23 +265,37 @@ main <- function() {
     cat("\ngRNA-specific Statistics:\n")
     print(stats$grna_stats)
     
-    # Create visualization
-    cat("\nCreating visualization...\n")
-    plot <- create_aav_alignment_plot(plot_data, data$aav_length)
+    # Create histogram visualization
+    cat("\nCreating histogram visualization...\n")
+    histogram_plot <- create_aav_alignment_plot(plot_data, data$aav_length)
     
-    # Save the plot
-    cat("\nSaving plot...\n")
+    # Create read alignment visualization
+    cat("\nCreating read alignment visualization...\n")
+    alignment_plot <- create_read_alignment_plot(all_reads, df, data$aav_length)
+    
+    # Save the plots
+    cat("\nSaving plots...\n")
     ggsave(
-      "aav_alignment_histogram.pdf",
-      plot,
+      "aav_histogram.pdf",
+      histogram_plot,
       width = 12,
       height = 8,
       units = "in",
       dpi = 300
     )
     
-    # Display the plot
-    print(plot)
+    ggsave(
+      "aav_read_alignment.pdf",
+      alignment_plot,
+      width = 12,
+      height = 8,
+      units = "in",
+      dpi = 300
+    )
+    
+    # Display the plots
+    print(histogram_plot)
+    print(alignment_plot)
     
     cat("\nAnalysis complete!\n")
     
@@ -210,6 +305,4 @@ main <- function() {
   })
 }
 
-# Run the analysis
 main()
-unqiue_reads <- unique(all_results$Read_Name)
