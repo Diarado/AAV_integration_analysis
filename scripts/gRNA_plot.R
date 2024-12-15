@@ -7,17 +7,17 @@ library(RColorBrewer)
 AAV_REF_PATH <- "D:/Jiahe/IU/AAV/HeLa_project/pssAAV-CB-EGFP_ARM.fa"
 AAV_READS_PATH <- "D:/Jiahe/IU/AAV/HeLa_project/output/aav_reads_locations.csv" 
 
-# CUT_SITES_PATH_unfiltered <- "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA.csv"
-# 
-# all_reads <- read.csv(AAV_READS_PATH)
-# all_reads <- all_reads |>
-#   filter(!is.na(Host_Chromosome))
-# 
-# df <- read.csv(CUT_SITES_PATH_unfiltered)
-# df <- df |>
-#   filter(Read_Name %in% all_reads$Read_Name)
-# 
-# write.csv(df, "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA_filtered.csv")
+CUT_SITES_PATH_unfiltered <- "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA.csv"
+
+all_reads <- read.csv(AAV_READS_PATH)
+all_reads <- all_reads |>
+  filter(!is.na(Host_Chromosome))
+
+df <- read.csv(CUT_SITES_PATH_unfiltered)
+df <- df |>
+  filter(Read_Name %in% all_reads$Read_Name)
+
+write.csv(df, "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA_filtered.csv")
 
 CUT_SITES_PATH <- "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA_filtered.csv"
 
