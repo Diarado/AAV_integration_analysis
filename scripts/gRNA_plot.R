@@ -13,6 +13,7 @@ all_reads <- read.csv(AAV_READS_PATH)
 all_reads <- all_reads |>
   filter(!is.na(Host_Chromosome))
 
+# this is filtered_reads
 df <- read.csv(CUT_SITES_PATH_unfiltered)
 df <- df |>
   filter(Read_Name %in% all_reads$Read_Name)
@@ -190,7 +191,7 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
     # Add a y-position for each read (stacking them vertically)
     group_by(Read_Name) %>%
     mutate(
-      y_position = cur_group_id() * -1  # Negative to plot below the reference line
+      y_position = cur_group_id()  # if put top, add * -1
     )
   
   # Create the reference genome data
@@ -199,16 +200,22 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
     y = c(0, 0)
   )
   
+  # Define ITR positions
+  itr5_start <- 1269
+  itr5_end <- 1413
+  itr3_start <- 4520
+  itr3_end <- 4664
+  
+  # Calculate y-range for the plot
+  max_y <- max(plot_reads$y_position)
+  
+  # Adjust ITR visualization proportions
+  itr_height_factor <- 0.05  # Height of ITR rectangle
+  label_offset_factor <- 0.08  # Position of labels
+  
   # Create the plot
   ggplot() +
-    # Add the reference genome line
-    geom_line(
-      data = reference_genome,
-      aes(x = x, y = y),
-      color = "black",
-      size = 1
-    ) +
-    # Add read alignment lines
+    # Add read alignment lines first (so they appear behind the reference line)
     geom_segment(
       data = plot_reads,
       aes(
@@ -217,16 +224,46 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
         y = y_position,
         yend = y_position
       ),
-      color = "lightblue",
+      color = "blue",
       size = 0.5,
       alpha = 0.6
     ) +
+    # Add 5' ITR rectangle (only below the line)
+    annotate("rect",
+             xmin = itr5_start, xmax = itr5_end,
+             ymin = -max_y * itr_height_factor, ymax = 0,  # Changed ymax to 0
+             fill = "orange", alpha = 0.3) +
+    # Add 3' ITR rectangle (only below the line)
+    annotate("rect",
+             xmin = itr3_start, xmax = itr3_end,
+             ymin = -max_y * itr_height_factor, ymax = 0,  # Changed ymax to 0
+             fill = "orange", alpha = 0.3) +
+    # Add the reference genome line (on top of rectangles)
+    geom_line(
+      data = reference_genome,
+      aes(x = x, y = y),
+      color = "black",
+      size = 1
+    ) +
+    # Add ITR labels
+    annotate("text",
+             x = (itr5_start + itr5_end) / 2,
+             y = -max_y * label_offset_factor,
+             label = "5' ITR",
+             angle = 90,
+             size = 3) +
+    annotate("text",
+             x = (itr3_start + itr3_end) / 2,
+             y = -max_y * label_offset_factor,
+             label = "3' ITR",
+             angle = 90,
+             size = 3) +
     # Customize the appearance
     labs(
-      title = "AAV Read Alignments",
+      title = "gRNA-cut AAV Read Alignments",
       subtitle = paste("Total unique reads:", nrow(unique_filtered_reads)),
       x = "AAV Genome Position",
-      y = "Read Number"
+      y = ""
     ) +
     theme_minimal() +
     theme(
@@ -242,7 +279,10 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
       breaks = seq(0, aav_length, by = 1000)
     ) +
     # Hide y-axis labels since they're just read indices
-    scale_y_continuous(labels = NULL)
+    scale_y_continuous(
+      limits = c(-max_y * 0.1, max_y),
+      labels = NULL
+    )
 }
 
 # Update the main function to include the new visualization
