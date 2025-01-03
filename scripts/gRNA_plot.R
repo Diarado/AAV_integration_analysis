@@ -181,6 +181,19 @@ generate_summary_stats <- function(position_data) {
 }
 
 create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
+  # Read and extract the AAV sequence
+  aav_seq <- as.character(readDNAStringSet(AAV_REF_PATH)[[1]])
+  # Extract the relevant region (1281-1453) and convert to lowercase
+  itr_seq <- tolower(substr(aav_seq, 1281, 1453))
+  
+  # Create sequence labels (10 bases per label)
+  seq_labels <- strsplit(itr_seq, "")[[1]]
+  seq_df <- data.frame(
+    x = 1281:1453,
+    label = seq_labels,
+    stringsAsFactors = FALSE
+  )
+  
   # Get unique Read_Names from filtered_reads
   unique_filtered_reads <- filtered_reads %>%
     distinct(Read_Name)
@@ -188,49 +201,51 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
   # Filter reads that are in the filtered dataset, keeping only unique reads
   plot_reads <- all_reads %>%
     filter(Read_Name %in% unique_filtered_reads$Read_Name) %>%
-    # Add a y-position for each read (stacking them vertically)
     group_by(Read_Name) %>%
     mutate(
-      y_position = cur_group_id()  # if put top, add * -1
+      y_position = cur_group_id()
     )
-  
-  # Create the reference genome data
-  reference_genome <- data.frame(
-    x = c(1, aav_length),
-    y = c(0, 0)
-  )
-  
-  # Define ITR positions
-  itr5_start <- 1269
-  itr5_end <- 1413
-  itr3_start <- 4520
-  itr3_end <- 4664
-  
-  # TODO:
-  # within R' ITR
-  # Please show the base of single sttand from 5' to 3' in lowercase
-  # the following range are both inclusive, aka []
-  # 1286-1301: RBE at 5' End; yellow
-  # 1311-1317: C'; purple
-  # 1323-1329: C; purple
-  # 1333-1339: B; green
-  # 1340-1344: RBE'; light yellow
-  # 1345-1351: B; green
-  # 1361-1376: RBE at 3' End; yellow
-  # 1377-1393: A; blue
-  # 1392-1393: Trs; red, note: put this rectangle below A due to overlap
-  # 1394-1413: D'; orange
   
   # Calculate y-range for the plot
   max_y <- max(plot_reads$y_position)
   
-  # Adjust ITR visualization proportions
-  itr_height_factor <- 0.05  # Height of ITR rectangle
-  label_offset_factor <- 0.08  # Position of labels
+  # Define ITR feature coordinates and colors - ensure each feature has a unique color
+  itr_features <- list(
+    list(start = 1281, end = 1453, name = "5' ITR", color = "#FFE4B5", layer = 1),
+    list(start = 1285.5, end = 1301.5, name = "RBE 5' End", color = "#FFD700", layer = 2),
+    list(start = 1310.5, end = 1317.5, name = "C'", color = "#DDA0DD", layer = 2),
+    list(start = 1322.5, end = 1329.5, name = "C", color = "#9370DB", layer = 2),
+    list(start = 1332.5, end = 1339.5, name = "B", color = "#90EE90", layer = 2),
+    list(start = 1339.5, end = 1344.5, name = "RBE'", color = "#FFFFE0", layer = 2),
+    list(start = 1344.5, end = 1351.5, name = "B'", color = "#98FB98", layer = 2),
+    list(start = 1360.5, end = 1376.5, name = "RBE 3' End", color = "#DAA520", layer = 2),
+    list(start = 1376.5, end = 1393.5, name = "A", color = "#ADD8E6", layer = 2),
+    list(start = 1391.5, end = 1393.5, name = "Trs", color = "#FF6B6B", layer = 3),
+    list(start = 1393.5, end = 1413.5, name = "D'", color = "orange", layer = 2)
+  )
+  
+  # Create feature rectangles data frame
+  feature_rects <- do.call(rbind, lapply(itr_features, function(f) {
+    data.frame(
+      xmin = f$start,
+      xmax = f$end,
+      ymin = -0.15 * max_y + (f$layer - 1) * -0.05 * max_y,
+      ymax = -0.10 * max_y + (f$layer - 1) * -0.05 * max_y,
+      name = f$name,
+      color = f$color,
+      stringsAsFactors = FALSE
+    )
+  }))
+  
+  # Create color vector that matches the features exactly
+  feature_colors <- setNames(
+    sapply(itr_features, function(x) x$color),
+    sapply(itr_features, function(x) x$name)
+  )
   
   # Create the plot
-  ggplot() +
-    # Add read alignment lines first (so they appear behind the reference line)
+  p <- ggplot() +
+    # Add read alignment lines
     geom_segment(
       data = plot_reads,
       aes(
@@ -240,43 +255,34 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
         yend = y_position
       ),
       color = "blue",
-      size = 0.5,
+      size = 1,
       alpha = 0.6
     ) +
-    # # Add 5' ITR rectangle (only below the line)
-    # annotate("rect",
-    #          xmin = itr5_start, xmax = itr5_end,
-    #          ymin = -max_y * itr_height_factor, ymax = 0,  # Changed ymax to 0
-    #          fill = "orange", alpha = 0.3) +
-    # # Add 3' ITR rectangle (only below the line)
-    # annotate("rect",
-    #          xmin = itr3_start, xmax = itr3_end,
-    #          ymin = -max_y * itr_height_factor, ymax = 0,  # Changed ymax to 0
-    #          fill = "orange", alpha = 0.3) +
-    # Add the reference genome line (on top of rectangles)
-    geom_line(
-      data = reference_genome,
-      aes(x = x, y = y),
-      color = "black",
-      size = 1
+    # Add sequence labels
+    geom_text(
+      data = seq_df,
+      aes(x = x, y = -0.05 * max_y, label = label),
+      size = 2.5,
+      family = "mono"
     ) +
-    # Add ITR labels
-    # annotate("text",
-    #          x = (itr5_start + itr5_end) / 2,
-    #          y = -max_y * label_offset_factor,
-    #          label = "5' ITR",
-    #          angle = 90,
-    #          size = 3) +
-    # annotate("text",
-    #          x = (itr3_start + itr3_end) / 2,
-    #          y = -max_y * label_offset_factor,
-    #          label = "3' ITR",
-    #          angle = 90,
-    #          size = 3) +
-    # Customize the appearance
+    # Add feature rectangles
+    geom_rect(
+      data = feature_rects,
+      aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = name),
+      alpha = 0.7
+    ) +
+    # Add feature labels
+    geom_text(
+      data = feature_rects,
+      aes(x = (xmin + xmax)/2, y = ymin - 0.02 * max_y, label = name),
+      size = 2.5,
+      angle = 45,
+      hjust = 0
+    ) +
+    # Customize the appearance with exact color matching
+    scale_fill_manual(values = feature_colors) +
     labs(
-      title = "gRNA-cut AAV Read Alignments",
-      subtitle = paste("Total unique reads:", nrow(unique_filtered_reads)),
+      title = "5' ITR gRNA-cut AAV Read Alignments",
       x = "AAV Genome Position",
       y = ""
     ) +
@@ -287,20 +293,22 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
       axis.title = element_text(size = 12),
       axis.text = element_text(size = 10),
       panel.grid.minor = element_blank(),
-      panel.grid.major.y = element_blank()
+      panel.grid.major.y = element_blank(),
+      legend.position = "none"
     ) +
     scale_x_continuous(
-      limits = c(0, aav_length),
-      breaks = seq(0, aav_length, by = 1000)
+      limits = c(1281, 1453),
+      breaks = seq(1280, 1460, by = 20)
     ) +
-    # Hide y-axis labels since they're just read indices
     scale_y_continuous(
-      limits = c(-max_y * 0.1, max_y),
+      limits = c(-0.35 * max_y, max_y),
       labels = NULL
     )
+  
+  return(p)
 }
 
-# Update the main function to include the new visualization
+# Update the main function to avoid opening new devices
 main <- function() {
   tryCatch({
     # Load and process data
@@ -322,10 +330,12 @@ main <- function() {
     # Create histogram visualization
     cat("\nCreating histogram visualization...\n")
     histogram_plot <- create_aav_alignment_plot(plot_data, data$aav_length)
+    print(histogram_plot)
     
     # Create read alignment visualization
     cat("\nCreating read alignment visualization...\n")
     alignment_plot <- create_read_alignment_plot(all_reads, df, data$aav_length)
+    print(alignment_plot)
     
     # Save the plots
     cat("\nSaving plots...\n")
@@ -346,10 +356,6 @@ main <- function() {
       units = "in",
       dpi = 300
     )
-    
-    # Display the plots
-    print(histogram_plot)
-    print(alignment_plot)
     
     cat("\nAnalysis complete!\n")
     
