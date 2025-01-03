@@ -206,6 +206,21 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
   itr3_start <- 4520
   itr3_end <- 4664
   
+  # TODO:
+  # within R' ITR
+  # Please show the base of single sttand from 5' to 3' in lowercase
+  # the following range are both inclusive, aka []
+  # 1286-1301: RBE at 5' End; yellow
+  # 1311-1317: C'; purple
+  # 1323-1329: C; purple
+  # 1333-1339: B; green
+  # 1340-1344: RBE'; light yellow
+  # 1345-1351: B; green
+  # 1361-1376: RBE at 3' End; yellow
+  # 1377-1393: A; blue
+  # 1392-1393: Trs; red, note: put this rectangle below A due to overlap
+  # 1394-1413: D'; orange
+  
   # Calculate y-range for the plot
   max_y <- max(plot_reads$y_position)
   
@@ -228,16 +243,16 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
       size = 0.5,
       alpha = 0.6
     ) +
-    # Add 5' ITR rectangle (only below the line)
-    annotate("rect",
-             xmin = itr5_start, xmax = itr5_end,
-             ymin = -max_y * itr_height_factor, ymax = 0,  # Changed ymax to 0
-             fill = "orange", alpha = 0.3) +
-    # Add 3' ITR rectangle (only below the line)
-    annotate("rect",
-             xmin = itr3_start, xmax = itr3_end,
-             ymin = -max_y * itr_height_factor, ymax = 0,  # Changed ymax to 0
-             fill = "orange", alpha = 0.3) +
+    # # Add 5' ITR rectangle (only below the line)
+    # annotate("rect",
+    #          xmin = itr5_start, xmax = itr5_end,
+    #          ymin = -max_y * itr_height_factor, ymax = 0,  # Changed ymax to 0
+    #          fill = "orange", alpha = 0.3) +
+    # # Add 3' ITR rectangle (only below the line)
+    # annotate("rect",
+    #          xmin = itr3_start, xmax = itr3_end,
+    #          ymin = -max_y * itr_height_factor, ymax = 0,  # Changed ymax to 0
+    #          fill = "orange", alpha = 0.3) +
     # Add the reference genome line (on top of rectangles)
     geom_line(
       data = reference_genome,
@@ -246,18 +261,18 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
       size = 1
     ) +
     # Add ITR labels
-    annotate("text",
-             x = (itr5_start + itr5_end) / 2,
-             y = -max_y * label_offset_factor,
-             label = "5' ITR",
-             angle = 90,
-             size = 3) +
-    annotate("text",
-             x = (itr3_start + itr3_end) / 2,
-             y = -max_y * label_offset_factor,
-             label = "3' ITR",
-             angle = 90,
-             size = 3) +
+    # annotate("text",
+    #          x = (itr5_start + itr5_end) / 2,
+    #          y = -max_y * label_offset_factor,
+    #          label = "5' ITR",
+    #          angle = 90,
+    #          size = 3) +
+    # annotate("text",
+    #          x = (itr3_start + itr3_end) / 2,
+    #          y = -max_y * label_offset_factor,
+    #          label = "3' ITR",
+    #          angle = 90,
+    #          size = 3) +
     # Customize the appearance
     labs(
       title = "gRNA-cut AAV Read Alignments",
