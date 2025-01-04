@@ -199,16 +199,14 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
     distinct(Read_Name)
   
   # Filter reads that are in the filtered dataset, keeping only unique reads
-  # print(unique_filtered_reads)
-  # print(all_reads)
   plot_reads <- all_reads %>%
     filter(AAV_Start >= 1281 & AAV_End <= 1453) %>%
     filter(Read_Name %in% unique_filtered_reads$Read_Name) %>%
-    arrange(Host_Start) %>%    
+    arrange(AAV_End) %>%    
     mutate(
       y_position = row_number()  
     )
-  print(plot_reads)
+  
   # Calculate y-range for the plot
   max_y <- max(plot_reads$y_position)
   
@@ -275,12 +273,17 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
       aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax, fill = name),
       alpha = 0.7
     ) +
-    # Add feature labels
+    # Add feature labels with conditional formatting for 5' ITR
     geom_text(
       data = feature_rects,
-      aes(x = (xmin + xmax)/2, y = ymin - 0.02 * max_y, label = name),
+      aes(x = (xmin + xmax)/2, 
+          y = ifelse(name == "5' ITR", 
+                     ymin + 0.02 * max_y,  # Higher position for 5' ITR
+                     ymin - 0.02 * max_y), 
+          label = name,
+          angle = ifelse(name == "5' ITR", 0, 45),  # Horizontal for 5' ITR, 45° for others
+          fontface = ifelse(name == "5' ITR", "bold", "plain")),  # Bold for 5' ITR
       size = 2.5,
-      angle = 45,
       hjust = 0
     ) +
     # Customize the appearance with exact color matching
