@@ -199,13 +199,16 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
     distinct(Read_Name)
   
   # Filter reads that are in the filtered dataset, keeping only unique reads
+  # print(unique_filtered_reads)
+  # print(all_reads)
   plot_reads <- all_reads %>%
+    filter(AAV_Start >= 1281 & AAV_End <= 1453) %>%
     filter(Read_Name %in% unique_filtered_reads$Read_Name) %>%
-    group_by(Read_Name) %>%
+    arrange(Host_Start) %>%    
     mutate(
-      y_position = cur_group_id()
+      y_position = row_number()  
     )
-  
+  print(plot_reads)
   # Calculate y-range for the plot
   max_y <- max(plot_reads$y_position)
   
@@ -258,6 +261,7 @@ create_read_alignment_plot <- function(all_reads, filtered_reads, aav_length) {
       size = 1,
       alpha = 0.6
     ) +
+    scale_y_discrete() + 
     # Add sequence labels
     geom_text(
       data = seq_df,
