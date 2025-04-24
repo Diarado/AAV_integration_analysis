@@ -18,6 +18,8 @@ df <- read.csv(CUT_SITES_PATH_unfiltered)
 df <- df |>
   filter(Read_Name %in% all_reads$Read_Name)
 
+cat("AAV-cut reads number:", length(unique(df$Read_Name)), "\n")
+
 write.csv(df, "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA_filtered.csv")
 
 CUT_SITES_PATH <- "D:/Jiahe/IU/AAV/HeLa_project/output/detailed_cut_sites_with_gRNA_filtered.csv"
@@ -76,14 +78,14 @@ load_and_process_data <- function(aav_reads_path, cut_sites_path, aav_ref_path) 
 
 prepare_plot_data <- function(aav_reads, cut_sites) {
   # Merge the data
-  merged_data <- aav_reads %>%
+  merged_data <<- aav_reads %>%
     inner_join(cut_sites, by = c("Read_Name", "Sample"), suffix = c(".aav", ".cut"))
   
   # Get total number of unique reads
-  total_unique_reads <- length(unique(merged_data$Read_Name))
+  total_unique_reads <<- length(unique(merged_data$Read_Name))
   
   # Calculate position-specific read counts and percentages
-  position_data <- merged_data %>%
+  position_data <<- merged_data %>%
     # Ensure we're counting unique reads
     distinct(Read_Name, AAV_Start.aav, AAV_End.aav, Cut_Site_Position, gRNA_id) %>%
     # Calculate absolute cut position
@@ -117,12 +119,12 @@ create_aav_alignment_plot <- function(position_data, aav_length) {
     )[1:n_grnas]
   }
   
-  # Create the plot
-  ggplot(position_data, aes(x = Absolute_Cut_Position, y = percentage)) +
-    # Add bars
-    geom_bar(stat = "identity", position = "stack", width = 50) +  # Adjust width as needed
+  # Create the plot - FIXED VERSION
+  p <- ggplot(position_data, aes(x = Absolute_Cut_Position, y = percentage)) +
+    # Add bars WITH fill aesthetic
+    geom_bar(aes(fill = gRNA_id), stat = "identity", position = "stack", width = 50) +
     
-    # Customize the appearance
+    # Now add customization
     scale_fill_manual(
       values = colors,
       name = "gRNA ID"
@@ -132,7 +134,7 @@ create_aav_alignment_plot <- function(position_data, aav_length) {
       title = "AAV Cut Site Distribution",
       subtitle = paste("Percentage of reads at each position", sep=""),
       x = "AAV Genome Position",
-      y = "On-Target reads (%)"
+      y = "Percentage of On-Target Reads with Cut at Position (%)"
     ) +
     theme_minimal() +
     theme(
@@ -150,9 +152,12 @@ create_aav_alignment_plot <- function(position_data, aav_length) {
       breaks = seq(0, aav_length, by = 1000)
     ) +
     scale_y_continuous(
-      limits = c(0, NA),  # Start at 0, auto-scale upper limit
-      expand = expansion(mult = c(0, 0.05))  # Remove padding at bottom, add small padding at top
+      limits = c(0, NA),
+      expand = expansion(mult = c(0, 0.05))
     )
+  
+  # Return the plot
+  return(p)
 }
 
 generate_summary_stats <- function(position_data) {
@@ -345,6 +350,7 @@ main <- function() {
     print(alignment_plot)
     
     # Save the plots
+
     cat("\nSaving plots...\n")
     ggsave(
       "aav_histogram.pdf",
@@ -354,7 +360,7 @@ main <- function() {
       units = "in",
       dpi = 300
     )
-    
+
     ggsave(
       "aav_read_alignment.pdf",
       alignment_plot,
