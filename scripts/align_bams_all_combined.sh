@@ -4,12 +4,6 @@
 # 
 # This script processes BAM files containing sequencing reads and re-aligns them 
 # to a combined reference genome (human hg38 + AAV vector).
-#
-# Key fixes:
-# 1. Converts GenBank format AAV reference to FASTA format
-# 2. Validates FASTA format before combining
-# 3. Adds proper error handling for index creation
-# 4. Removes duplicate code sections
 
 # Define paths
 BAM_DIR="../data/barcode03"                    # Input BAM files directory
@@ -110,10 +104,16 @@ validate_fasta() {
     return 0
 }
 
-# Clean up any existing corrupted files
+# Check if combined reference exists before creating
 if [ -f "$COMBINED_REF" ]; then
-    echo "Removing existing combined reference to recreate it..."
-    rm -f "$COMBINED_REF" "${COMBINED_REF}."* 
+    echo "Combined reference already exists at $COMBINED_REF"
+    
+    # Validate the existing combined reference
+    validate_fasta "$COMBINED_REF" "existing combined reference"
+    if [ $? -ne 0 ]; then
+        echo "Existing combined reference failed validation. Recreating..."
+        rm -f "$COMBINED_REF" "${COMBINED_REF}."*
+    fi
 fi
 
 # Check if combined reference needs to be created
@@ -197,6 +197,7 @@ echo "Found $BAM_COUNT BAM files to process"
 # Process each BAM file
 processed=0
 failed=0
+skipped=0
 
 for BAM_FILE in "$BAM_DIR"/*.bam; do
     SAMPLE_NAME=$(basename "$BAM_FILE" .bam)
@@ -204,6 +205,22 @@ for BAM_FILE in "$BAM_DIR"/*.bam; do
     # Check if output already exists
     if [ -f "$ALIGN_DIR/${SAMPLE_NAME}_with_header.bam" ]; then
         echo "Skipping $SAMPLE_NAME, output BAM file already exists"
+        
+        # If stats exist, add them to the summary
+        if [ -f "$ALIGN_DIR/${SAMPLE_NAME}_flagstat.txt" ]; then
+            TOTAL_READS=$(grep "in total" "$ALIGN_DIR/${SAMPLE_NAME}_flagstat.txt" | cut -d ' ' -f 1)
+            MAPPED_READS=$(grep "mapped (" "$ALIGN_DIR/${SAMPLE_NAME}_flagstat.txt" | head -1 | cut -d ' ' -f 1)
+            
+            if [[ "$TOTAL_READS" -gt 0 ]]; then
+                MAPPING_RATE=$(echo "scale=2; $MAPPED_READS * 100 / $TOTAL_READS" | bc -l 2>/dev/null || echo "0")
+            else
+                MAPPING_RATE="0"
+            fi
+            
+            echo "$SAMPLE_NAME,$TOTAL_READS,$MAPPED_READS,${MAPPING_RATE}%" >> "$OUTPUT_CSV"
+        fi
+        
+        ((skipped++))
         continue
     fi
     
@@ -297,11 +314,12 @@ echo "========================================="
 echo "Processing complete!"
 echo "Successfully processed: $processed samples"
 echo "Failed: $failed samples"
+echo "Skipped (already aligned): $skipped samples"
 echo "Summary statistics saved to: $OUTPUT_CSV"
 echo "========================================="
 
 # Additional diagnostics if all samples failed
-if [ "$processed" -eq 0 ] && [ "$failed" -gt 0 ]; then
+if [ "$processed" -eq 0 ] && [ "$failed" -gt 0 ] && [ "$skipped" -eq 0 ]; then
     echo ""
     echo "WARNING: All samples failed to process!"
     echo "Common issues to check:"
