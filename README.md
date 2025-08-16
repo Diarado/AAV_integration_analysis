@@ -3,4 +3,4 @@ AAV can be integrated in host genome. This program finds the integration sites a
 
 
 To find AAV-human genome junction sites:
-run align_fastqs.sh followed by integration_analysis.R
+run align_bams_all_combined.sh followed by integration_analysis.R
