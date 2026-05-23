@@ -49,16 +49,16 @@ run_with_timeout() {
     local timeout_sec=$1
     shift
     local cmd=("$@")
-    
+
     # Run command with timeout
     timeout "$timeout_sec" "${cmd[@]}"
     local exit_code=$?
-    
+
     # Check if command timed out (exit code 124)
     if [ $exit_code -eq 124 ]; then
         return 124
     fi
-    
+
     return $exit_code
 }
 
@@ -276,7 +276,7 @@ for BAM_FILE in "$BAM_DIR"/*.bam; do
     echo "Converting BAM to FASTQ..."
     run_with_timeout 60 samtools fastq "$BAM_FILE" > "$ALIGN_DIR/${SAMPLE_NAME}.fastq" 2>"$ALIGN_DIR/${SAMPLE_NAME}_fastq.err"
     exit_code=$?
-    
+
     if [ $exit_code -eq 124 ]; then
         log_error "$SAMPLE_NAME" "BAM to FASTQ conversion timed out after 60 seconds"
         skip_sample=true
@@ -306,7 +306,7 @@ for BAM_FILE in "$BAM_DIR"/*.bam; do
     run_with_timeout "$TIMEOUT_SECONDS" bwa mem -t "$threads" "$COMBINED_REF" "$ALIGN_DIR/${SAMPLE_NAME}.fastq" \
         > "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam" 2>"$ALIGN_DIR/${SAMPLE_NAME}_bwa.err"
     exit_code=$?
-    
+
     if [ $exit_code -eq 124 ]; then
         log_error "$SAMPLE_NAME" "BWA alignment timed out after ${TIMEOUT_SECONDS} seconds"
         rm -f "$ALIGN_DIR/${SAMPLE_NAME}.fastq" "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam"
@@ -325,7 +325,7 @@ for BAM_FILE in "$BAM_DIR"/*.bam; do
     run_with_timeout 120 bash -c "samtools view -@ $threads -Sb '$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam' 2>'$ALIGN_DIR/${SAMPLE_NAME}_view.err' | \
     samtools sort -@ $threads -o '$ALIGN_DIR/${SAMPLE_NAME}_with_header.bam' 2>'$ALIGN_DIR/${SAMPLE_NAME}_sort.err'"
     exit_code=$?
-    
+
     if [ $exit_code -eq 124 ]; then
         log_error "$SAMPLE_NAME" "SAM to BAM conversion/sorting timed out after 120 seconds"
         rm -f "$ALIGN_DIR/${SAMPLE_NAME}.fastq" "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam" "$ALIGN_DIR/${SAMPLE_NAME}_with_header.bam"
