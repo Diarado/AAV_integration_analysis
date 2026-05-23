@@ -1,32 +1,22 @@
 #!/bin/bash
 
-# BAM to Combined Reference Alignment Script (With Timeout and Error Handling)
+# FASTQ to Combined Reference Alignment Script (With Timeout and Error Handling)
 #
-# This script processes BAM files containing sequencing reads and re-aligns them
+# This script processes FASTQ files containing sequencing reads and aligns them
 # to a combined reference genome (host + AAV vector).
 
-# Define paths
-BAM_DIR="../data/barcode03"                    # Input BAM files directory
-ALIGN_DIR="../data/aligned_bams_barcode03"     # Output directory
-HOST_REF="../data/hg38/hg38.fa"               # Human genome reference
-AAV_REF_GB="../data/barcode03_ref/37825-AAV2-CAG-EGFP.gb"  # AAV reference (GenBank)
-AAV_REF_FA="../data/barcode03_ref/AAV2-CAG-EGFP.fa"        # AAV reference (FASTA)
-COMBINED_REF="../data/barcode03_ref/combined_ref.fa"       # Combined reference
-OUTPUT_CSV="../data/alignment_summary_barcode03.csv"     # Summary statistics
-ERROR_LOG="../data/alignment_errors_barcode03.log"       # Error log file
+# Define paths - MODIFY THESE FOR YOUR DATA
+FASTQ_DIR="../data_Tung/barcode03"                    # Input FASTQ files directory
+ALIGN_DIR="../data_Tung/aligned_bams_barcode03"       # Output directory
+HOST_REF="../data/GRCm39/GRCm39.fa"                  # Human genome reference
+AAV_REF_GB="../data_Tung/ref/pAAV_mFancc_cDNA-sgRNA-1.gb"  # AAV reference (GenBank)
+AAV_REF_FA="../data_Tung/ref/pAAV_mFancc_cDNA-sgRNA-1.fa"        # AAV reference (FASTA)
+COMBINED_REF="../data_Tung/ref/combined_ref.fa"       # Combined reference
+OUTPUT_CSV="../data_Tung/alignment_summary_barcode03.csv"       # Summary statistics
+ERROR_LOG="../data_Tung/alignment_errors_barcode03.log"         # Error log file
 
-
-BAM_DIR="../data/barcode19"                    # Input BAM files directory
-ALIGN_DIR="../data/aligned_bams_barcode19"     # Output directory
-HOST_REF="../data/hg38/hg38.fa"               # mouse genome reference GCF_000001635.27_GRCm39_genomic
-AAV_REF_GB="../data/barcode16-21_ref/pAAV_mFancc_cDNA-sgRNA.gb" # AAV reference (dna)
-AAV_REF_FA="../data/barcode16-21_ref/pAAV_mFancc_cDNA-sgRNA.fa"        # AAV reference (FASTA)
-COMBINED_REF="../data/barcode16-21_ref_hg38/combined_ref.fa"       # Combined reference
-OUTPUT_CSV="../data/alignment_summary_barcode19.csv"     # Summary statistics
-ERROR_LOG="../data/alignment_errors_barcode19.log"       # Error log file
-
-threads=10                                       # Number of threads to use
-TIMEOUT_SECONDS=600                            # Timeout for alignment (10 minutes)
+threads=10                                        # Number of threads to use
+TIMEOUT_SECONDS=600                              # Timeout for alignment (10 minutes)
 
 # Create output directory
 mkdir -p "$ALIGN_DIR"
@@ -220,28 +210,35 @@ if [ ! -f "${COMBINED_REF}.fai" ]; then
     echo "Samtools indexing completed successfully"
 fi
 
-# Check if BAM directory exists
-if [ ! -d "$BAM_DIR" ]; then
-    echo "Error: BAM directory not found at $BAM_DIR"
+# Check if FASTQ directory exists
+if [ ! -d "$FASTQ_DIR" ]; then
+    echo "Error: FASTQ directory not found at $FASTQ_DIR"
     exit 1
 fi
 
-# Count BAM files
-BAM_COUNT=$(find "$BAM_DIR" -name "*.bam" -type f | wc -l)
-if [ "$BAM_COUNT" -eq 0 ]; then
-    echo "Error: No BAM files found in $BAM_DIR"
+# Count FASTQ files (handle both .fastq and .fq extensions, compressed and uncompressed)
+FASTQ_COUNT=$(find "$FASTQ_DIR" -type f \( -name "*.fastq" -o -name "*.fq" -o -name "*.fastq.gz" -o -name "*.fq.gz" \) | wc -l)
+if [ "$FASTQ_COUNT" -eq 0 ]; then
+    echo "Error: No FASTQ files found in $FASTQ_DIR"
     exit 1
 fi
-echo "Found $BAM_COUNT BAM files to process"
+echo "Found $FASTQ_COUNT FASTQ files to process"
 
-# Process each BAM file
+# Process each FASTQ file
 processed=0
 failed=0
 skipped=0
 timed_out=0
 
-for BAM_FILE in "$BAM_DIR"/*.bam; do
-    SAMPLE_NAME=$(basename "$BAM_FILE" .bam)
+for FASTQ_FILE in "$FASTQ_DIR"/*.{fastq,fq,fastq.gz,fq.gz}; do
+    # Skip if no files match the pattern
+    [ ! -f "$FASTQ_FILE" ] && continue
+    
+    # Get sample name (remove directory and extensions)
+    SAMPLE_NAME=$(basename "$FASTQ_FILE")
+    SAMPLE_NAME="${SAMPLE_NAME%.gz}"      # Remove .gz if present
+    SAMPLE_NAME="${SAMPLE_NAME%.fastq}"   # Remove .fastq
+    SAMPLE_NAME="${SAMPLE_NAME%.fq}"      # Remove .fq
 
     # Check if output already exists
     if [ -f "$ALIGN_DIR/${SAMPLE_NAME}_with_header.bam" ]; then
@@ -269,53 +266,36 @@ for BAM_FILE in "$BAM_DIR"/*.bam; do
     echo "Processing $SAMPLE_NAME..."
     echo "----------------------------------------"
 
-    # Flag to track if this sample should be skipped
-    skip_sample=false
-
-    # Convert BAM to FASTQ
-    echo "Converting BAM to FASTQ..."
-    run_with_timeout 60 samtools fastq "$BAM_FILE" > "$ALIGN_DIR/${SAMPLE_NAME}.fastq" 2>"$ALIGN_DIR/${SAMPLE_NAME}_fastq.err"
-    exit_code=$?
+    # Check if file is compressed and set appropriate command
+    if [[ "$FASTQ_FILE" == *.gz ]]; then
+        echo "Detected compressed FASTQ file"
+        READ_CMD="zcat"
+        # Get read count from compressed FASTQ
+        READ_COUNT=$(zcat "$FASTQ_FILE" | grep -c "^@" || echo "0")
+    else
+        READ_CMD="cat"
+        # Get read count from FASTQ
+        READ_COUNT=$(grep -c "^@" "$FASTQ_FILE" || echo "0")
+    fi
     
-    if [ $exit_code -eq 124 ]; then
-        log_error "$SAMPLE_NAME" "BAM to FASTQ conversion timed out after 60 seconds"
-        skip_sample=true
-    elif [ $exit_code -ne 0 ]; then
-        log_error "$SAMPLE_NAME" "BAM to FASTQ conversion failed (exit code: $exit_code)"
-        skip_sample=true
-    fi
-
-    # Check if FASTQ is empty
-    if [ "$skip_sample" = false ] && [ ! -s "$ALIGN_DIR/${SAMPLE_NAME}.fastq" ]; then
-        log_error "$SAMPLE_NAME" "Generated FASTQ file is empty"
-        skip_sample=true
-    fi
-
-    if [ "$skip_sample" = true ]; then
-        rm -f "$ALIGN_DIR/${SAMPLE_NAME}.fastq"
-        ((failed++))
-        continue
-    fi
-
-    # Get read count from FASTQ
-    READ_COUNT=$(grep -c "^@" "$ALIGN_DIR/${SAMPLE_NAME}.fastq" || echo "0")
     echo "Found $READ_COUNT reads in FASTQ"
 
     # Align to combined reference with timeout
+    # BWA can handle both compressed and uncompressed FASTQ directly
     echo "Aligning to combined reference (timeout: ${TIMEOUT_SECONDS}s)..."
-    run_with_timeout "$TIMEOUT_SECONDS" bwa mem -t "$threads" "$COMBINED_REF" "$ALIGN_DIR/${SAMPLE_NAME}.fastq" \
+    run_with_timeout "$TIMEOUT_SECONDS" bwa mem -t "$threads" "$COMBINED_REF" "$FASTQ_FILE" \
         > "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam" 2>"$ALIGN_DIR/${SAMPLE_NAME}_bwa.err"
     exit_code=$?
     
     if [ $exit_code -eq 124 ]; then
         log_error "$SAMPLE_NAME" "BWA alignment timed out after ${TIMEOUT_SECONDS} seconds"
-        rm -f "$ALIGN_DIR/${SAMPLE_NAME}.fastq" "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam"
+        rm -f "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam"
         ((timed_out++))
         ((failed++))
         continue
     elif [ $exit_code -ne 0 ]; then
         log_error "$SAMPLE_NAME" "BWA alignment failed (exit code: $exit_code)"
-        rm -f "$ALIGN_DIR/${SAMPLE_NAME}.fastq" "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam"
+        rm -f "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam"
         ((failed++))
         continue
     fi
@@ -328,13 +308,13 @@ for BAM_FILE in "$BAM_DIR"/*.bam; do
     
     if [ $exit_code -eq 124 ]; then
         log_error "$SAMPLE_NAME" "SAM to BAM conversion/sorting timed out after 120 seconds"
-        rm -f "$ALIGN_DIR/${SAMPLE_NAME}.fastq" "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam" "$ALIGN_DIR/${SAMPLE_NAME}_with_header.bam"
+        rm -f "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam" "$ALIGN_DIR/${SAMPLE_NAME}_with_header.bam"
         ((timed_out++))
         ((failed++))
         continue
     elif [ $exit_code -ne 0 ]; then
         log_error "$SAMPLE_NAME" "SAM to BAM conversion/sorting failed (exit code: $exit_code)"
-        rm -f "$ALIGN_DIR/${SAMPLE_NAME}.fastq" "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam" "$ALIGN_DIR/${SAMPLE_NAME}_with_header.bam"
+        rm -f "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam" "$ALIGN_DIR/${SAMPLE_NAME}_with_header.bam"
         ((failed++))
         continue
     fi
@@ -369,8 +349,12 @@ for BAM_FILE in "$BAM_DIR"/*.bam; do
         echo "Alignment stats: $MAPPED_READS/$TOTAL_READS mapped (${MAPPING_RATE}%)"
     fi
 
+    # Generate per-reference statistics
+    echo "Generating per-reference alignment statistics..."
+    samtools idxstats "$ALIGN_DIR/${SAMPLE_NAME}_with_header.bam" > "$ALIGN_DIR/${SAMPLE_NAME}_idxstats.txt"
+    
     # Clean up intermediate files
-    rm -f "$ALIGN_DIR/${SAMPLE_NAME}.fastq" "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam"
+    rm -f "$ALIGN_DIR/${SAMPLE_NAME}_with_header.sam"
     rm -f "$ALIGN_DIR/${SAMPLE_NAME}_"*.err  # Clean up error files if successful
 
     echo "Successfully processed $SAMPLE_NAME"
